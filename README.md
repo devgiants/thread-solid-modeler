@@ -59,6 +59,12 @@ If you want to build it locally:
 2. Build the `Release` configuration on Windows.
 3. Use the generated `bin\release\ThreadSolidModeler.bundle` layout as the installable package.
 
+To build and deploy the local Release bundle in one step, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build-and-deploy-release.ps1
+```
+
 ## Notes
 
 - The add-in targets Autodesk Inventor 2026.
