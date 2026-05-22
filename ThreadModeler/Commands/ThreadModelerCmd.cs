@@ -42,7 +42,7 @@ namespace ThreadModeler.Commands
         {
             get
             {
-                return "threadModeler";
+                return "ThreadSolidModeler";
             }
         }
 
@@ -50,7 +50,7 @@ namespace ThreadModeler.Commands
         {
             get
             {
-                return "coolOrange.ThreadModeler.ThreadModelerCmd";
+                return "ThreadSolidModeler.ThreadModelerCmd";
             }
         }
 
@@ -75,7 +75,7 @@ namespace ThreadModeler.Commands
         {
             get
             {
-                return "Displays ThreadModeler main control";
+                return "Displays ThreadSolidModeler main control";
             }
         }
 
@@ -83,7 +83,7 @@ namespace ThreadModeler.Commands
         {
             get
             {
-                return "Displays ThreadModeler main control";
+                return "Displays ThreadSolidModeler main control";
             }
         }
 

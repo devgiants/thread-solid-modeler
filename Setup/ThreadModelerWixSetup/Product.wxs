@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-	<Product Id="*" Name="coolOrange Inventor ThreadModeler" Language="1033" Version="$(var.PVersion)" Manufacturer="coolOrange s.r.l" UpgradeCode="87CF466A-9CB2-464D-B971-1B6EB514A727">
+	<Product Id="*" Name="ThreadSolidModeler" Language="1033" Version="$(var.PVersion)" Manufacturer="ThreadSolidModeler" UpgradeCode="87CF466A-9CB2-464D-B971-1B6EB514A727">
 		<Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
 
 		<MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
@@ -20,7 +20,7 @@
         <Directory Id='AutoDesk'
                    Name='Autodesk'>
           <Directory Id='AppPlugins' Name='ApplicationPlugins'>
-            <Directory Id="INSTALLFOLDER" Name="cODTthreadModeler.bundle" />
+            <Directory Id="INSTALLFOLDER" Name="ThreadSolidModeler.bundle" />
           </Directory>
         </Directory>
       </Directory>

@@ -51,44 +51,58 @@ namespace ThreadModeler.Addin
         {
             Assembly thisAssembly = Assembly.GetExecutingAssembly();
             FileInfo fi = new FileInfo(thisAssembly.Location + ".log4net");
+            Directory.CreateDirectory(Path.Combine(fi.DirectoryName, "Log"));
             log4net.GlobalContext.Properties["LogFileName"] = fi.DirectoryName + "\\Log\\threadModeler";
             log4net.Config.XmlConfigurator.Configure(fi);
             log = log4net.LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+            DebugLog.Initialize(thisAssembly.Location);
         }
 
         #region ApplicationAddInServer Members
 
         public void Activate(Inventor.ApplicationAddInSite addInSiteObject, bool firstTime)
         {
-            log.Debug("Activating ThreadModeler Addin");
-            // This method is called by Inventor when it loads the addin.
-            // The AddInSiteObject provides access to the Inventor Application object.
-            // The FirstTime flag indicates if the addin is loaded for the first time.
+            try
+            {
+                log.Debug("Activating ThreadModeler Addin");
+                DebugLog.WriteLine("Activate(firstTime=" + firstTime + ")");
+                // This method is called by Inventor when it loads the addin.
+                // The AddInSiteObject provides access to the Inventor Application object.
+                // The FirstTime flag indicates if the addin is loaded for the first time.
 
-            // Initialize AddIn members.
-            m_inventorApplication = addInSiteObject.Application;
+                // Initialize AddIn members.
+                m_inventorApplication = addInSiteObject.Application;
 
-            Type addinType = this.GetType();
+                Type addinType = this.GetType();
 
-            AdnInventorUtilities.Initialize(m_inventorApplication, addinType);
+                AdnInventorUtilities.Initialize(m_inventorApplication, addinType);
 
-            Toolkit.Initialize(m_inventorApplication);
-            ThreadWorker.Initialize(m_inventorApplication);
-            
-            AdnCommand.AddCommand(new ThreadModelerCmd(m_inventorApplication));
+                Toolkit.Initialize(m_inventorApplication);
+                ThreadWorker.Initialize(m_inventorApplication);
+                DebugLog.WriteLine("Inventor application and workers initialized.");
 
-            AdnCommand.AddCommand(new AboutCtrlCmd(m_inventorApplication));
+                AdnCommand.AddCommand(new ThreadModelerCmd(m_inventorApplication));
 
-            AdnCommand.AddCommand(new HelpCtrlCmd(m_inventorApplication));
-           
-            // Only after all commands have been added,
-            // load Ribbon UI from customized xml file.
-            // Make sure "InternalName" of above commands is matching 
-            // "internalName" tag described in xml of corresponding command.
-            AdnRibbonBuilder.CreateRibbon(
-                m_inventorApplication,
-               addinType,
-               "ThreadModeler.resources.ribbons.xml");
+                AdnCommand.AddCommand(new AboutCtrlCmd(m_inventorApplication));
+
+                AdnCommand.AddCommand(new HelpCtrlCmd(m_inventorApplication));
+
+                // Only after all commands have been added,
+                // load Ribbon UI from customized xml file.
+                // Make sure "InternalName" of above commands is matching
+                // "internalName" tag described in xml of corresponding command.
+                AdnRibbonBuilder.CreateRibbon(
+                    m_inventorApplication,
+                   addinType,
+                   "ThreadModeler.resources.ribbons.xml");
+                DebugLog.WriteLine("Ribbon creation completed.");
+            }
+            catch (Exception ex)
+            {
+                log.Error("ThreadModeler add-in activation failed.", ex);
+                DebugLog.WriteException("ThreadModeler add-in activation failed.", ex);
+                throw;
+            }
         }
 
         public void Deactivate()
@@ -96,6 +110,8 @@ namespace ThreadModeler.Addin
             // This method is called by Inventor when the AddIn is unloaded.
             // The AddIn will be unloaded either manually by the user or
             // when the Inventor session is terminated
+
+            DebugLog.WriteLine("Deactivate()");
 
             // TODO: Add ApplicationAddInServer.Deactivate implementation
 

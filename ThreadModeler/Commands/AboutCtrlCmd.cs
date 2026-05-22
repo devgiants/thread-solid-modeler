@@ -20,7 +20,7 @@ namespace ThreadModeler.Commands
 
         public override string InternalName
         {
-            get { return "coolOrange.ThreadModeler.AboutCtrlCmd"; }
+            get { return "ThreadSolidModeler.AboutCtrlCmd"; }
         }
 
         public override CommandTypesEnum Classification
@@ -39,12 +39,12 @@ namespace ThreadModeler.Commands
 
         public override string Description
         {
-            get { return "Displays threadModeler Info"; }
+            get { return "Displays ThreadSolidModeler info"; }
         }
 
         public override string ToolTipText
         {
-            get { return "Displays threadModeler Info"; }
+            get { return "Displays ThreadSolidModeler info"; }
         }
 
         public override ButtonDisplayEnum ButtonDisplay

@@ -1,0 +1,63 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Release
+        shell: pwsh
+        run: |
+          $msbuild = (Get-Command msbuild.exe).Source
+          & $msbuild .\ThreadModeler.sln /t:Build /p:Configuration=Release /p:Platform='Any CPU'
+
+      - name: Stage bundle
+        shell: pwsh
+        run: |
+          $workspace = $env:GITHUB_WORKSPACE
+          $buildRoot = Join-Path $workspace 'bin\release'
+          $bundleRoot = Join-Path $workspace 'dist\ThreadSolidModeler.bundle'
+          $bundleContents = Join-Path $bundleRoot 'Contents'
+
+          if (Test-Path $bundleRoot) {
+            Remove-Item $bundleRoot -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $bundleContents -Force | Out-Null
+
+          Copy-Item -LiteralPath (Join-Path $buildRoot 'PackageContents.xml') -Destination $bundleRoot -Force
+          Copy-Item -Path (Join-Path $buildRoot 'Contents\*') -Destination $bundleContents -Recurse -Force
+
+      - name: Archive release bundle
+        shell: pwsh
+        run: |
+          $workspace = $env:GITHUB_WORKSPACE
+          $bundleRoot = Join-Path $workspace 'dist\ThreadSolidModeler.bundle'
+          $zipPath = Join-Path $workspace ("ThreadSolidModeler-{0}.zip" -f $env:GITHUB_REF_NAME)
+
+          if (Test-Path $zipPath) {
+            Remove-Item $zipPath -Force
+          }
+
+          Compress-Archive -Path $bundleRoot -DestinationPath $zipPath -Force
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ThreadSolidModeler ${{ github.ref_name }}
+          files: ThreadSolidModeler-${{ github.ref_name }}.zip
+          generate_release_notes: true

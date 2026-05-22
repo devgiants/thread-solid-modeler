@@ -18,7 +18,7 @@ namespace ThreadModeler.Commands
 
         public override string InternalName
         {
-            get { return "coolOrange.ThreadModeler.HelpCtrlCmd"; }
+            get { return "ThreadSolidModeler.HelpCtrlCmd"; }
         }
 
         public override CommandTypesEnum Classification
@@ -37,12 +37,12 @@ namespace ThreadModeler.Commands
 
         public override string Description
         {
-            get { return "Displays threadModeler help"; }
+            get { return "Displays ThreadSolidModeler help"; }
         }
 
         public override string ToolTipText
         {
-            get { return "Displays threadModeler help"; }
+            get { return "Displays ThreadSolidModeler help"; }
         }
 
         public override ButtonDisplayEnum ButtonDisplay
@@ -68,7 +68,11 @@ namespace ThreadModeler.Commands
 
         protected override void OnExecute(NameValueMap context)
         {
-            System.Diagnostics.Process.Start("http://wiki.coolorange.com/display/threadModeler");
+            System.Windows.Forms.MessageBox.Show(
+                "ThreadSolidModeler is a fork of the original coolOrange ThreadModeler.\nSee the repository README for usage and attribution.",
+                "ThreadSolidModeler Help",
+                System.Windows.Forms.MessageBoxButtons.OK,
+                System.Windows.Forms.MessageBoxIcon.Information);
             Terminate();
         }
 

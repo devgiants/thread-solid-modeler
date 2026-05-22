@@ -61,7 +61,7 @@
             // 
             // bOk
             // 
-            this.bOk.Location = new System.Drawing.Point(209, 239);
+            this.bOk.Location = new System.Drawing.Point(209, 297);
             this.bOk.Name = "bOk";
             this.bOk.Size = new System.Drawing.Size(75, 23);
             this.bOk.TabIndex = 0;
@@ -71,7 +71,7 @@
             // 
             // bCancel
             // 
-            this.bCancel.Location = new System.Drawing.Point(290, 239);
+            this.bCancel.Location = new System.Drawing.Point(290, 297);
             this.bCancel.Name = "bCancel";
             this.bCancel.Size = new System.Drawing.Size(75, 23);
             this.bCancel.TabIndex = 1;
@@ -119,7 +119,7 @@
             this.lvFeatures.GridLines = true;
             this.lvFeatures.Items.AddRange(new System.Windows.Forms.ListViewItem[] {
             listViewItem1});
-            this.lvFeatures.Location = new System.Drawing.Point(12, 128);
+            this.lvFeatures.Location = new System.Drawing.Point(12, 176);
             this.lvFeatures.MultiSelect = false;
             this.lvFeatures.Name = "lvFeatures";
             this.lvFeatures.Size = new System.Drawing.Size(353, 99);
@@ -203,7 +203,7 @@
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Dpi;
             this.AutoSize = true;
             this.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
-            this.ClientSize = new System.Drawing.Size(377, 270);
+            this.ClientSize = new System.Drawing.Size(377, 330);
             this.Controls.Add(this.gbPitchOffset);
             this.Controls.Add(this.lvFeatures);
             this.Controls.Add(this.gbTemplate);

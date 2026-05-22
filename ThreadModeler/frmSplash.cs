@@ -45,7 +45,11 @@ namespace ThreadModeler
             this.linkLabel1.LinkVisited = true;
 
             // Navigate to a URL.
-            System.Diagnostics.Process.Start("http://www.coolorange.com");
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "http://www.coolorange.com",
+                UseShellExecute = true
+            });
         }
 	}
 }

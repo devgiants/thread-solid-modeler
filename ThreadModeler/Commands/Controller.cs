@@ -93,7 +93,15 @@ namespace ThreadModeler.Commands
             _InteractionManager.SelectEvents.OnUnSelect +=
                 new SelectEventsSink_OnUnSelectEventHandler(
                     SelectEvents_OnUnSelect);
+            this.Shown += Controller_Shown;
             this.FormClosing += Controller_FormClosing;
+        }
+
+        void Controller_Shown(object sender, EventArgs e)
+        {
+            DebugLog.WriteLine("Controller shown.");
+            LoadCurrentSelection();
+            bOk.Enabled = ValidateOkButton();
         }
 
         void Controller_FormClosing(object sender, FormClosingEventArgs e)
@@ -115,88 +123,7 @@ namespace ThreadModeler.Commands
         {
             foreach (System.Object obj in JustSelectedEntities)
             {
-                PartFeature feature = obj as PartFeature;
-
-                ThreadFeature thread = obj as ThreadFeature;
-
-                ThreadInfo threadInfo = thread.ThreadInfo;
-
-                Face threadedFace = thread.ThreadedFace[1];
-
-
-                if (feature.Suppressed)
-                    continue;
-
-                if (thread.ThreadInfoType == ThreadTypeEnum.kTaperedThread &&
-                    threadedFace.SurfaceType != SurfaceTypeEnum.kConeSurface)
-                {
-                    DialogResult res = MessageBox.Show(
-                        "Threaded face surface type is not cone surface but it is applied" +
-                        System.Environment.NewLine +
-                        "with tapered thread. ThreadModeler cannot modelize this thread.",
-                        "Invalid Surface Type",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Error);
-                    continue;
-                }
-
-                string iMateName = string.Empty;
-
-                if (Toolkit.HasiMate(threadedFace,
-                    out iMateName))
-                {
-                    DialogResult res = MessageBox.Show(
-                        "Threaded face or one of its edge has" +
-                        " iMate associated to it." +
-                        System.Environment.NewLine +
-                        "Please delete iMate " + iMateName  +
-                        " before modelizing this thread.",
-                        "Invalid iMate",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Error);
-
-                    continue;
-                }
-
-                double pitch = ThreadWorker.GetThreadPitch(threadInfo);
-
-                string pitchStr =
-                    ThreadWorker.GetThreadPitchStr(threadInfo,
-                        (Document)_Document);
-
-                string minStr =
-                    _Document.UnitsOfMeasure.GetStringFromValue(
-                        ThreadWorker.ThresholdPitchCm,
-                        UnitsTypeEnum.kDefaultDisplayLengthUnits);
-
-                if (pitch < ThreadWorker.ThresholdPitchCm)
-                {
-                    DialogResult res = MessageBox.Show(
-                       "Selected thread pitch " +
-                       "is too small (" + pitchStr + ")." +
-                       System.Environment.NewLine +
-                       "The minimum thread pitch that can " +
-                       "be modelized is " + minStr + " .",
-                       "Invalid Thread Pitch",
-                       MessageBoxButtons.OK,
-                       MessageBoxIcon.Error);
-
-                    continue;
-                }
-
-                ListViewItem item =
-                    lvFeatures.Items.Add(feature.Name);
-
-                item.Tag = feature;
-
-                item.SubItems.Add(pitchStr);
-
-                item.SubItems.Add(ThreadWorker.GetThreadTypeStr(
-                    feature));
-
-                item.SubItems.Add(
-                    ThreadWorker.GetThreadedFaceTypeStr(
-                        threadedFace));
+                AddThreadSelection(obj, true);
             }
 
             _selecSetPopulated = (lvFeatures.Items.Count != 0);
@@ -237,6 +164,13 @@ namespace ThreadModeler.Commands
         /////////////////////////////////////////////////////////////
         private void bOk_Click(object sender, EventArgs e)
         {
+            DebugLog.WriteLine(string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                "OK clicked: selected={0}, template='{1}', extraPitch={2}",
+                _InteractionManager.SelectedEntities.Count,
+                _ThreadTemplatePath,
+                _extraPitch));
+
             bool silentOp = _Application.SilentOperation;
 
             _Application.SilentOperation = true;
@@ -248,6 +182,7 @@ namespace ThreadModeler.Commands
 
             if (!ValidateTemplateParameters(template))
             {
+                DebugLog.WriteLine("Template validation failed.");
                 DialogResult res = MessageBox.Show(
                     "Missing sketch parameter in template file!",
                     "Invalid Template",
@@ -290,9 +225,10 @@ namespace ThreadModeler.Commands
                 threads,
                 _extraPitch))
             {
+                DebugLog.WriteLine("ModelizeThreads returned false.");
                 DialogResult res = MessageBox.Show(
                     "Failed to create CoilFeature... " +
-                    "Try with a bigger Pitch Offset value",
+                    "Try adjusting Pitch Offset",
                     "Modelization Error",
                     MessageBoxButtons.OKCancel,
                     MessageBoxIcon.Error);
@@ -398,7 +334,7 @@ namespace ThreadModeler.Commands
                 fileDlg.DialogTitle = "Select Thread Template";
                 fileDlg.InitialDirectory =
                     fi.DirectoryName + "\\Thread Templates";
-                fileDlg.FileName = "BSW Template.ipt";
+                fileDlg.FileName = "ISO Template.ipt";
                 fileDlg.MultiSelectEnabled = false;
                 fileDlg.OptionsEnabled = false;
                 fileDlg.CancelError = true;
@@ -427,7 +363,7 @@ namespace ThreadModeler.Commands
 
             string path =
                 fi.DirectoryName +
-                "\\Thread Templates\\BSW Template.ipt";
+                "\\Thread Templates\\ISO Template.ipt";
 
             if (System.IO.File.Exists(path))
             {
@@ -500,13 +436,203 @@ namespace ThreadModeler.Commands
 
         private void CleanUp()
         {
-            _InteractionManager.SelectEvents.OnSelect -= new SelectEventsSink_OnSelectEventHandler(
-                    SelectEvents_OnSelect);
+            if (_cleaned)
+                return;
 
-            _InteractionManager.SelectEvents.OnUnSelect -=
-                new SelectEventsSink_OnUnSelectEventHandler(
-                    SelectEvents_OnUnSelect);
+            try
+            {
+                if (_InteractionManager != null &&
+                    _InteractionManager.SelectEvents != null)
+                {
+                    _InteractionManager.SelectEvents.OnSelect -=
+                        new SelectEventsSink_OnSelectEventHandler(
+                            SelectEvents_OnSelect);
+
+                    _InteractionManager.SelectEvents.OnUnSelect -=
+                        new SelectEventsSink_OnUnSelectEventHandler(
+                            SelectEvents_OnUnSelect);
+                }
+            }
+            catch
+            {
+            }
+
+            this.Shown -= Controller_Shown;
+            this.FormClosing -= Controller_FormClosing;
             _cleaned = true;
+        }
+
+        private void LoadCurrentSelection()
+        {
+            if (_Document == null)
+                return;
+
+            try
+            {
+                SelectSet selectSet = _Document.SelectSet;
+                DebugLog.WriteLine("LoadCurrentSelection count=" + selectSet.Count);
+
+                for (int i = 1; i <= selectSet.Count; i++)
+                {
+                    AddThreadSelection(selectSet[i], false);
+                }
+            }
+            catch
+            {
+                DebugLog.WriteLine("LoadCurrentSelection failed.");
+            }
+
+            _selecSetPopulated = (lvFeatures.Items.Count != 0);
+        }
+
+        private void AddThreadSelection(object obj, bool showMessages)
+        {
+            PartFeature feature = obj as PartFeature;
+            ThreadFeature thread = obj as ThreadFeature;
+
+            if (thread == null || feature == null)
+            {
+                thread = ResolveThreadFeatureProxy(obj);
+                feature = thread as PartFeature;
+            }
+
+            if (thread == null || feature == null)
+            {
+                DebugLog.WriteLine("Skipping non-thread selection: " + (obj == null ? "<null>" : obj.GetType().FullName));
+                return;
+            }
+
+            if (ContainsFeature(feature))
+                return;
+
+            ThreadInfo threadInfo = thread.ThreadInfo;
+            Face threadedFace = thread.ThreadedFace[1];
+
+            if (feature.Suppressed)
+                return;
+
+            if (thread.ThreadInfoType == ThreadTypeEnum.kTaperedThread &&
+                threadedFace.SurfaceType != SurfaceTypeEnum.kConeSurface)
+            {
+                if (showMessages)
+                {
+                    MessageBox.Show(
+                        "Threaded face surface type is not cone surface but it is applied" +
+                        System.Environment.NewLine +
+                        "with tapered thread. ThreadModeler cannot modelize this thread.",
+                        "Invalid Surface Type",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
+                }
+
+                return;
+            }
+
+            string iMateName = string.Empty;
+
+            if (Toolkit.HasiMate(threadedFace, out iMateName))
+            {
+                if (showMessages)
+                {
+                    MessageBox.Show(
+                        "Threaded face or one of its edge has" +
+                        " iMate associated to it." +
+                        System.Environment.NewLine +
+                        "Please delete iMate " + iMateName +
+                        " before modelizing this thread.",
+                        "Invalid iMate",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
+                }
+
+                return;
+            }
+
+            double pitch = ThreadWorker.GetThreadPitch(threadInfo);
+
+            string pitchStr =
+                ThreadWorker.GetThreadPitchStr(threadInfo,
+                    (Document)_Document);
+
+            string minStr =
+                _Document.UnitsOfMeasure.GetStringFromValue(
+                    ThreadWorker.ThresholdPitchCm,
+                    UnitsTypeEnum.kDefaultDisplayLengthUnits);
+
+            if (pitch < ThreadWorker.ThresholdPitchCm)
+            {
+                if (showMessages)
+                {
+                    MessageBox.Show(
+                       "Selected thread pitch " +
+                       "is too small (" + pitchStr + ")." +
+                       System.Environment.NewLine +
+                       "The minimum thread pitch that can " +
+                       "be modelized is " + minStr + " .",
+                       "Invalid Thread Pitch",
+                       MessageBoxButtons.OK,
+                       MessageBoxIcon.Error);
+                }
+
+                return;
+            }
+
+            DebugLog.WriteLine("Selected thread: " + feature.Name);
+            DebugLog.WriteValue("  type", ThreadWorker.GetThreadTypeStr(feature));
+            DebugLog.WriteValue("  face", ThreadWorker.GetThreadedFaceTypeStr(threadedFace));
+            DebugLog.WriteValue("  pitch", pitchStr);
+            DebugLog.WriteValue("  threadInfoType", threadInfo == null ? "<null>" : threadInfo.GetType().Name);
+            DebugLog.WriteInventorPoint("  basePoint", threadInfo == null ? null : threadInfo.ThreadBasePoints[1] as Point);
+            DebugLog.WriteInventorVector("  direction", threadInfo == null ? null : threadInfo.ThreadDirection);
+
+            ListViewItem item =
+                lvFeatures.Items.Add(feature.Name);
+
+            item.Tag = feature;
+
+            item.SubItems.Add(pitchStr);
+
+            item.SubItems.Add(ThreadWorker.GetThreadTypeStr(
+                feature));
+
+            item.SubItems.Add(
+                ThreadWorker.GetThreadedFaceTypeStr(
+                    threadedFace));
+
+            if (!_InteractionManager.SelectedEntities.Contains(thread))
+            {
+                _InteractionManager.SelectedEntities.Add(thread);
+            }
+        }
+
+        private ThreadFeature ResolveThreadFeatureProxy(object obj)
+        {
+            try
+            {
+                object nativeObject = obj.GetType().InvokeMember(
+                    "NativeObject",
+                    BindingFlags.GetProperty,
+                    null,
+                    obj,
+                    null);
+
+                return nativeObject as ThreadFeature;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private bool ContainsFeature(PartFeature feature)
+        {
+            foreach (ListViewItem item in lvFeatures.Items)
+            {
+                if (ReferenceEquals(item.Tag, feature))
+                    return true;
+            }
+
+            return false;
         }
     }
 }

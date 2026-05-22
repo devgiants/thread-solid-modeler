@@ -11,6 +11,7 @@
 using System;
 using System.Collections.Generic;
 using Inventor;
+using ThreadModeler.Utilities;
 
 namespace ThreadModeler
 {
@@ -44,15 +45,24 @@ namespace ThreadModeler
         // Use: High-level method that modelizes a collection of
         //      ThreadFeatures.
         /////////////////////////////////////////////////////////////
+        /////////////////////////////////////////////////////////////
+        // Use: High-level method that modelizes a collection of
+        //      ThreadFeatures.
+        /////////////////////////////////////////////////////////////
         public static bool ModelizeThreads(PartDocument doc,
             PlanarSketch templateSketch,
             IEnumerable<ThreadFeature> threads,
             double extraPitch)
         {
             bool ret = true;
+            DebugLog.WriteLine(string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                "ModelizeThreads start: extraPitch={0}",
+                extraPitch));
 
             foreach (ThreadFeature thread in threads)
             {
+                DebugLog.WriteLine("ModelizeThreads thread=" + thread.Name + " type=" + thread.ThreadInfoType);
                 switch (thread.ThreadInfoType)
                 { 
                     case ThreadTypeEnum.kStandardThread:
@@ -107,6 +117,9 @@ namespace ThreadModeler
 
             try
             {
+                DebugLog.WriteLine("ModelizeThreadStandard start for " + feature.Name);
+                LogThreadContext("standard", threadInfo, threadedFace, extraPitch);
+
                 double pitch = 
                     ThreadWorker.GetThreadPitch(threadInfo);
 
@@ -146,12 +159,16 @@ namespace ThreadModeler
 
                 double taper = 0;
 
+                SurfaceBody affectedBody;
+
                 if (!ThreadWorker.InitializeForCoilStandard(doc, 
                     threadInfo,
                     threadedFace,
                     newSketch.Name, 
-                    isInteriorFace, pitch))
+                    isInteriorFace, pitch,
+                    out affectedBody))
                 {
+                    DebugLog.WriteLine("InitializeForCoilStandard returned false.");
                     Tx.Abort();
                     return false;
                 }
@@ -166,8 +183,11 @@ namespace ThreadModeler
                     rightHanded,
                     taper,
                     pitch,
-                    extraPitch))
+                    extraPitch,
+                    affectedBody,
+                    isInteriorFace))
                 {
+                    DebugLog.WriteLine("CreateCoilFeature returned false for standard thread " + feature.Name);
                     Tx.Abort();
                     return false;
                 }
@@ -180,8 +200,9 @@ namespace ThreadModeler
 
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                DebugLog.WriteException("ModelizeThreadStandard failed for " + feature.Name, ex);
                 Tx.Abort();
                 return false;
             }
@@ -205,6 +226,9 @@ namespace ThreadModeler
 
             try
             {
+                DebugLog.WriteLine("ModelizeThreadTapered start for " + feature.Name);
+                LogThreadContext("tapered", threadInfo, threadedFace, extraPitch);
+
                 double pitch = 
                     ThreadWorker.GetThreadPitch(threadInfo);
 
@@ -227,11 +251,15 @@ namespace ThreadModeler
 
                 sketchYAxis.ScaleBy((isInteriorFace ? -1.0 : 1.0));
 
+                Point sketchBasePoint = sideDir.RootPoint;
+
+                sketchYAxis = sketchBasePoint.VectorTo(coilBase);
+
                 PlanarSketch newSketch = Toolkit.InsertSketch(doc,
                     templateSketch,
                     sideDir.Direction,
                     sketchYAxis.AsUnitVector(),
-                    sideDir.RootPoint);
+                    sketchBasePoint);
 
                 bool rightHanded = threadInfo.RightHanded;
 
@@ -245,11 +273,12 @@ namespace ThreadModeler
                         * (IsExpanding ? 1.0 : -1.0);
 
                 if (!ThreadWorker.InitializeForCoilTapered(doc, 
-                    threadInfo, 
+                    threadInfo,
                     threadedFace,
                     newSketch.Name, 
                     isInteriorFace, pitch))
                 {
+                    DebugLog.WriteLine("InitializeForCoilTapered returned false.");
                     Tx.Abort();
                     return false;
                 }
@@ -259,6 +288,22 @@ namespace ThreadModeler
                         null, 
                         null);
 
+                SurfaceBody affectedBody;
+                double depth = ThreadWorker.GetThreadMajorRadiusTapered(
+                    threadInfo,
+                    threadedFace);
+
+                if (!ThreadWorker.CreateCoilBodyTapered(doc,
+                    threadInfo,
+                    threadedFace,
+                    depth,
+                    isInteriorFace,
+                    out affectedBody))
+                {
+                    Tx.Abort();
+                    return false;
+                }
+
                 if (!ThreadWorker.CreateCoilFeature(doc,
                     profile,
                     threadDirection,
@@ -266,8 +311,11 @@ namespace ThreadModeler
                     rightHanded,
                     taper,
                     pitch,
-                    extraPitch))
+                    extraPitch,
+                    affectedBody,
+                    isInteriorFace))
                 {
+                    DebugLog.WriteLine("CreateCoilFeature returned false for tapered thread " + feature.Name);
                     Tx.Abort();
                     return false;
                 }
@@ -280,10 +328,11 @@ namespace ThreadModeler
 
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
                 try
                 {
+                    DebugLog.WriteException("ModelizeThreadTapered failed for " + feature.Name, ex);
                     Tx.Abort();
                     return false;
                 }
@@ -304,8 +353,13 @@ namespace ThreadModeler
             ThreadInfo threadInfo, 
             Face threadedFace,
             string sketchName,
-            bool isInteriorFace, double pitchValue)
+            bool isInteriorFace,
+            double pitchValue,
+            out SurfaceBody affectedBody)
         {
+            affectedBody = null;
+            DebugLog.WriteLine("InitializeForCoilStandard sketch=" + sketchName);
+
             Parameter pitch =
                 Toolkit.FindAndUpdateParameter(doc,
                     "Pitch",
@@ -338,35 +392,44 @@ namespace ThreadModeler
             if (minor == null)
                 return false;
 
+            DebugLog.WriteParameter("  pitch(before)", pitch);
+            DebugLog.WriteParameter("  offset(before)", offset);
+            DebugLog.WriteParameter("  major(before)", major);
+            DebugLog.WriteParameter("  minor(before)", minor);
+
             pitch.Value = pitchValue;
 
             offset.Value = 0;
 
-            double majorRad = 
+            double majorRad =
                 ThreadWorker.GetThreadMajorRadiusStandard(
                     threadedFace);
 
-            //Modif
+            double minorValue = Math.Abs((double)minor.Value);
+
             major.Value = (isInteriorFace ? 0 : majorRad);
+            DebugLog.WriteLine(string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                "  standard radii majorRad={0} minorValue={1} interior={2}",
+                majorRad,
+                minorValue,
+                isInteriorFace));
  
             doc.Update();
 
-            double minorRad = 
-                (isInteriorFace ? 
-                    majorRad + Math.Abs((double)minor.Value) : 
-                    Math.Abs((double)minor.Value));
-
             if (isInteriorFace)
             {
-                major.Value = (isInteriorFace ? Math.Abs((double)minor.Value) : majorRad);
+                major.Value = minorValue;
                 doc.Update();
             }
 
-            bool ret = ThreadWorker.CreateCoilBodyStandard(doc, 
-                threadInfo, 
-                minorRad, 
-                majorRad,
-                isInteriorFace);
+                bool ret = ThreadWorker.CreateCoilBodyStandard(doc, 
+                    threadInfo, 
+                    threadedFace,
+                    minorValue, 
+                    majorRad,
+                    isInteriorFace,
+                    out affectedBody);
 
             return ret;
         }
@@ -381,8 +444,11 @@ namespace ThreadModeler
             ThreadInfo threadInfo,
             Face threadedFace,
             string sketchName,
-            bool isInteriorFace, double pitchValue)
+            bool isInteriorFace,
+            double pitchValue)
         {
+            DebugLog.WriteLine("InitializeForCoilTapered sketch=" + sketchName);
+
             Parameter pitch = 
                 Toolkit.FindAndUpdateParameter(doc, 
                     "Pitch", 
@@ -415,28 +481,29 @@ namespace ThreadModeler
             if (minor == null)
                 return false;
 
+            DebugLog.WriteParameter("  pitch(before)", pitch);
+            DebugLog.WriteParameter("  offset(before)", offset);
+            DebugLog.WriteParameter("  major(before)", major);
+            DebugLog.WriteParameter("  minor(before)", minor);
+
             pitch.Value = pitchValue;
 
             offset.Value = 0;
 
+            double minorValue = Math.Abs((double)minor.Value);
+
             double majorRad = 0;
 
             major.Value = (isInteriorFace ? 0 : majorRad);
+            DebugLog.WriteLine(string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                "  tapered values minorValue={0} interior={1}",
+                minorValue,
+                isInteriorFace));
 
             doc.Update();
 
-            double minorRad = 
-                (isInteriorFace ? 
-                    majorRad + Math.Abs((double)minor.Value) : 
-                    Math.Abs((double)minor.Value));
-
-            bool ret = ThreadWorker.CreateCoilBodyTapered(doc,
-                threadInfo, 
-                threadedFace,
-                Math.Abs(majorRad - minorRad),
-                isInteriorFace);
-
-            return ret;
+            return true;
         }
 
         /////////////////////////////////////////////////////////////
@@ -445,163 +512,39 @@ namespace ThreadModeler
         /////////////////////////////////////////////////////////////
         private static bool CreateCoilBodyStandard(PartDocument doc,
             ThreadInfo threadInfo,
+            Face threadedFace,
             double minorRad,
             double majorRad,
-            bool isInteriorFace)
+            bool isInteriorFace,
+            out SurfaceBody affectedBody)
         {
             try
             {
-                PartComponentDefinition compDef = 
-                    doc.ComponentDefinition;
+                affectedBody = null;
+                DebugLog.WriteLine(string.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    "CreateCoilBodyStandard minorRad={0} majorRad={1} interior={2}",
+                    minorRad,
+                    majorRad,
+                    isInteriorFace));
 
-                Vector direction = threadInfo.ThreadDirection;
-
-                Point basePoint =
-                    threadInfo.ThreadBasePoints[1] as Point;
-
-                Point endPoint = _Tg.CreatePoint(
-                    basePoint.X + direction.X,
-                    basePoint.Y + direction.Y,
-                    basePoint.Z + direction.Z);
-
-                UnitVector yAxis = direction.AsUnitVector();
-
-                UnitVector xAxis = Toolkit.GetOrthoVector(yAxis);
-
-                WorkPoint wpt = compDef.WorkPoints.AddFixed(basePoint, 
-                    _ConstructionWorkFeature);
-
-                WorkPlane wpl = compDef.WorkPlanes.AddFixed(basePoint, 
-                    xAxis, 
-                    yAxis, 
-                    _ConstructionWorkFeature);
-
-                WorkAxis xWa = compDef.WorkAxes.AddFixed(basePoint, 
-                    xAxis, 
-                    _ConstructionWorkFeature);
-
-                WorkAxis yWa = compDef.WorkAxes.AddFixed(basePoint, 
-                    yAxis, 
-                    _ConstructionWorkFeature);
-
-                Point sidePt = _Tg.CreatePoint(
-                    basePoint.X + xAxis.X * majorRad,
-                    basePoint.Y + xAxis.Y * majorRad,
-                    basePoint.Z + xAxis.Z * majorRad);
-
-                //Modif
-                //double revDepth = 
-                //    Math.Abs(majorRad - minorRad) * 
-                //    (isInteriorFace ? -1.0 : 1.0);
-
-                double revDepth = Math.Abs(majorRad - minorRad);
-
-                Line l1 = _Tg.CreateLine(sidePt, yAxis.AsVector());
-
-                Line l2 = _Tg.CreateLine(basePoint, xAxis.AsVector());
-
-                Line l3 = _Tg.CreateLine(endPoint, xAxis.AsVector());
-
-                Point p1 =
-                    l1.IntersectWithCurve(l2, 0.0001)[1] as Point;
-
-                Point p2 =
-                    l1.IntersectWithCurve(l3, 0.0001)[1] as Point;
-
-                Point p3 = _Tg.CreatePoint(
-                    p2.X - xAxis.X * revDepth,
-                    p2.Y - xAxis.Y * revDepth,
-                    p2.Z - xAxis.Z * revDepth);
-
-                Point p4 = _Tg.CreatePoint(
-                    p1.X - xAxis.X * revDepth,
-                    p1.Y - xAxis.Y * revDepth,
-                    p1.Z - xAxis.Z * revDepth);
-
-               
-                SketchPoint skp1 = null;
-                SketchPoint skp2 = null;
-                SketchPoint skp3 = null;
-                SketchPoint skp4 = null;
-
-                PlanarSketch sketch = null;
-                Profile profile = null;
-
-                if (!isInteriorFace)
+                if (isInteriorFace)
                 {
-                    sketch =
-                        compDef.Sketches.AddWithOrientation(wpl,
-                            xWa,
-                            true,
-                            true,
-                            wpt,
-                            false);
-
-                    skp1 = sketch.SketchPoints.Add(
-                        sketch.ModelToSketchSpace(p1), false);
-
-                    skp2 = sketch.SketchPoints.Add(
-                        sketch.ModelToSketchSpace(p2), false);
-
-                    skp3 = sketch.SketchPoints.Add(
-                        sketch.ModelToSketchSpace(p3), false);
-
-                    skp4 = sketch.SketchPoints.Add(
-                        sketch.ModelToSketchSpace(p4), false);
-
-                    sketch.SketchLines.AddByTwoPoints(skp1, skp2);
-                    sketch.SketchLines.AddByTwoPoints(skp2, skp3);
-                    sketch.SketchLines.AddByTwoPoints(skp3, skp4);
-                    sketch.SketchLines.AddByTwoPoints(skp4, skp1);
-
-                    profile =
-                        sketch.Profiles.AddForSolid(true, null, null);
-
-                    RevolveFeature rev1 =
-                     compDef.Features.RevolveFeatures.AddFull(
-                      profile,
-                      yWa,
-                      PartFeatureOperationEnum.kCutOperation);
+                    affectedBody = threadedFace.SurfaceBody as SurfaceBody;
+                    DebugLog.WriteLine("CreateCoilBodyStandard interior uses host body=" +
+                        (affectedBody == null ? "<null>" : affectedBody.Name));
+                    return (affectedBody != null);
                 }
 
-              
-                sketch = compDef.Sketches.AddWithOrientation(wpl, 
-                    xWa, 
-                    true, 
-                    true, 
-                    wpt, 
-                    false);
-
-                skp1 = sketch.SketchPoints.Add(
-                    sketch.ModelToSketchSpace(p1), false);
-
-                skp2 = sketch.SketchPoints.Add(
-                    sketch.ModelToSketchSpace(p2), false);
-
-                skp3 = sketch.SketchPoints.Add(
-                    sketch.ModelToSketchSpace(p3), false);
-
-                skp4 = sketch.SketchPoints.Add(
-                    sketch.ModelToSketchSpace(p4), false);
-
-                sketch.SketchLines.AddByTwoPoints(skp1, skp2);
-                sketch.SketchLines.AddByTwoPoints(skp2, skp3);
-                sketch.SketchLines.AddByTwoPoints(skp3, skp4);
-                sketch.SketchLines.AddByTwoPoints(skp4, skp1);
-
-                profile = sketch.Profiles.AddForSolid(true, 
-                    null, null);
-
-                RevolveFeature rev2 = 
-                 compDef.Features.RevolveFeatures.AddFull(
-                  profile,
-                  yWa,
-                  PartFeatureOperationEnum.kNewBodyOperation);
-
-                return true;
+                affectedBody = threadedFace.SurfaceBody as SurfaceBody;
+                DebugLog.WriteLine("CreateCoilBodyStandard exterior uses host body=" +
+                    (affectedBody == null ? "<null>" : affectedBody.Name));
+                return (affectedBody != null);
             }
-            catch
+            catch (Exception ex)
             {
+                DebugLog.WriteException("CreateCoilBodyStandard failed.", ex);
+                affectedBody = null;
                 return false;
             }
         }
@@ -614,126 +557,35 @@ namespace ThreadModeler
             ThreadInfo threadInfo,
             Face threadedFace,
             double depth,
-            bool isInteriorFace)
+            bool isInteriorFace,
+            out SurfaceBody affectedBody)
         {
             try
             {
-                PartComponentDefinition compDef = 
-                    doc.ComponentDefinition;
+                affectedBody = null;
+                DebugLog.WriteLine(string.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    "CreateCoilBodyTapered depth={0} interior={1}",
+                    depth,
+                    isInteriorFace));
 
-                Vector direction = threadInfo.ThreadDirection;
+                if (isInteriorFace)
+                {
+                    affectedBody = threadedFace.SurfaceBody as SurfaceBody;
+                    DebugLog.WriteLine("CreateCoilBodyTapered interior uses host body=" +
+                        (affectedBody == null ? "<null>" : affectedBody.Name));
+                    return (affectedBody != null);
+                }
 
-                Point basePoint =
-                    threadInfo.ThreadBasePoints[1] as Point;
-
-                Point endPoint = _Tg.CreatePoint(
-                    basePoint.X + direction.X,
-                    basePoint.Y + direction.Y,
-                    basePoint.Z + direction.Z);
-
-                UnitVector yAxis = direction.AsUnitVector();
-
-                UnitVector xAxis = Toolkit.GetOrthoVector(yAxis);
-
-                WorkPoint wpt = compDef.WorkPoints.AddFixed(basePoint, 
-                    _ConstructionWorkFeature);
-
-                WorkPlane wpl = compDef.WorkPlanes.AddFixed(basePoint, 
-                    xAxis, yAxis, _ConstructionWorkFeature);
-
-                WorkAxis xWa = compDef.WorkAxes.AddFixed(basePoint, 
-                    xAxis, _ConstructionWorkFeature);
-
-                WorkAxis yWa = compDef.WorkAxes.AddFixed(basePoint, 
-                    yAxis, _ConstructionWorkFeature);
-
-                PlanarSketch sketch = 
-                    compDef.Sketches.AddWithOrientation(wpl, 
-                        xWa, true, true, wpt, false);
-
-                Cone cone = threadedFace.Geometry as Cone;
-
-                double revDepth = 
-                    depth / Math.Cos(cone.HalfAngle) * 
-                        (isInteriorFace ? -1.0 : 1.0);
-
-                Line l1 = Toolkit.GetFaceSideDirection(threadedFace, xAxis);
-
-                Line l2 = _Tg.CreateLine(basePoint, xAxis.AsVector());
-
-                Line l3 = _Tg.CreateLine(endPoint, xAxis.AsVector());
-
-                Point p1 = l1.IntersectWithCurve(l2, 0.0001)[1] as Point;
-                Point p2 = l1.IntersectWithCurve(l3, 0.0001)[1] as Point;
-
-                Point p3 = _Tg.CreatePoint(
-                    p2.X - xAxis.X * revDepth,
-                    p2.Y - xAxis.Y * revDepth,
-                    p2.Z - xAxis.Z * revDepth);
-
-                Point p4 = _Tg.CreatePoint(
-                    p1.X - xAxis.X * revDepth,
-                    p1.Y - xAxis.Y * revDepth,
-                    p1.Z - xAxis.Z * revDepth);
-
-                SketchPoint skp1 = sketch.SketchPoints.Add(
-                    sketch.ModelToSketchSpace(p1), false);
-
-                SketchPoint skp2 = sketch.SketchPoints.Add(
-                    sketch.ModelToSketchSpace(p2), false);
-
-                SketchPoint skp3 = sketch.SketchPoints.Add(
-                    sketch.ModelToSketchSpace(p3), false);
-
-                SketchPoint skp4 = sketch.SketchPoints.Add(
-                    sketch.ModelToSketchSpace(p4), false);
-
-                sketch.SketchLines.AddByTwoPoints(skp1, skp2);
-                sketch.SketchLines.AddByTwoPoints(skp2, skp3);
-                sketch.SketchLines.AddByTwoPoints(skp3, skp4);
-                sketch.SketchLines.AddByTwoPoints(skp4, skp1);
-
-                Profile profile = sketch.Profiles.AddForSolid(true, 
-                    null, null);
-
-                RevolveFeature rev1 = 
-                 compDef.Features.RevolveFeatures.AddFull(
-                  profile,
-                  yWa,
-                  PartFeatureOperationEnum.kCutOperation);
-
-                sketch = compDef.Sketches.AddWithOrientation(wpl, 
-                    xWa, true, true, wpt, false);
-
-                skp1 = sketch.SketchPoints.Add(
-                    sketch.ModelToSketchSpace(p1), false);
-
-                skp2 = sketch.SketchPoints.Add(
-                    sketch.ModelToSketchSpace(p2), false);
-
-                skp3 = sketch.SketchPoints.Add(
-                    sketch.ModelToSketchSpace(p3), false);
-
-                skp4 = sketch.SketchPoints.Add(
-                    sketch.ModelToSketchSpace(p4), false);
-
-                sketch.SketchLines.AddByTwoPoints(skp1, skp2);
-                sketch.SketchLines.AddByTwoPoints(skp2, skp3);
-                sketch.SketchLines.AddByTwoPoints(skp3, skp4);
-                sketch.SketchLines.AddByTwoPoints(skp4, skp1);
-
-                profile = sketch.Profiles.AddForSolid(true, null, null);
-
-                RevolveFeature rev2 = 
-                 compDef.Features.RevolveFeatures.AddFull(
-                  profile,
-                  yWa,
-                  PartFeatureOperationEnum.kNewBodyOperation);
-
-                return true;
+                affectedBody = threadedFace.SurfaceBody as SurfaceBody;
+                DebugLog.WriteLine("CreateCoilBodyTapered exterior uses host body=" +
+                    (affectedBody == null ? "<null>" : affectedBody.Name));
+                return (affectedBody != null);
             }
-            catch
+            catch (Exception ex)
             {
+                DebugLog.WriteException("CreateCoilBodyTapered failed.", ex);
+                affectedBody = null;
                 return false;
             }
         }
@@ -749,10 +601,21 @@ namespace ThreadModeler
             bool rightHanded,
             double taper,
             double pitch,
-            double extraPitch)
+            double extraPitch,
+            SurfaceBody affectedBody,
+            bool isInteriorFace)
         {
             try
             {
+                DebugLog.WriteLine(string.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    "CreateCoilFeature pitch={0} extraPitch={1} taper={2} rightHanded={3} affectedBody={4}",
+                    pitch,
+                    extraPitch,
+                    taper,
+                    rightHanded,
+                    affectedBody == null ? "<null>" : affectedBody.Name));
+
                 PartComponentDefinition compDef = 
                     doc.ComponentDefinition;
 
@@ -782,19 +645,18 @@ namespace ThreadModeler
                         0, 
                         0);
                  
-                ObjectCollection bodies = 
-                 _Application.TransientObjects.
-                    CreateObjectCollection(null);
+                if (affectedBody != null && !isInteriorFace)
+                {
+                    DebugLog.WriteLine("CreateCoilFeature exterior uses default affected body resolution.");
+                }
 
-                bodies.Add(
-                 compDef.SurfaceBodies[compDef.SurfaceBodies.Count]);
-                
-                coil.SetAffectedBodies(bodies);
+                DebugLog.WriteLine("CreateCoilFeature health=" + coil.HealthStatus);
                  
                 return (coil.HealthStatus == HealthStatusEnum.kUpToDateHealth);
             }
-            catch
+            catch (Exception ex)
             {
+                DebugLog.WriteException("CreateCoilFeature failed.", ex);
                 return false;
             }
         }
@@ -822,6 +684,74 @@ namespace ThreadModeler
             }
 
             return false;
+        }
+
+        /////////////////////////////////////////////////////////////
+        // Use: Returns Thread Pitch value as double (in cm).
+        //
+        /////////////////////////////////////////////////////////////
+        private static void LogThreadContext(string mode,
+            ThreadInfo threadInfo,
+            Face threadedFace,
+            double extraPitch)
+        {
+            try
+            {
+                DebugLog.WriteLine("Context mode=" + mode);
+                DebugLog.WriteValue("  threadInfoType", threadInfo == null ? "<null>" : threadInfo.GetType().Name);
+                DebugLog.WriteValue("  faceType", threadedFace == null ? "<null>" : threadedFace.SurfaceType.ToString());
+                DebugLog.WriteValue("  extraPitch", extraPitch);
+                DebugLog.WriteValue("  rightHanded", threadInfo == null ? "<null>" : threadInfo.RightHanded.ToString());
+                DebugLog.WriteInventorPoint("  basePoint", threadInfo == null ? null : threadInfo.ThreadBasePoints[1] as Point);
+                DebugLog.WriteInventorVector("  threadDirection", threadInfo == null ? null : threadInfo.ThreadDirection);
+                if (threadInfo != null)
+                {
+                    DebugLog.WriteValue("  pitch(cm)", ThreadWorker.GetThreadPitch(threadInfo).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    LogThreadMetadata(threadInfo);
+                }
+            }
+            catch (Exception ex)
+            {
+                DebugLog.WriteException("LogThreadContext failed.", ex);
+            }
+        }
+
+        /////////////////////////////////////////////////////////////
+        // Use: Logs the thread metadata exposed by Inventor so we
+        //      can validate the generator against the catalog data.
+        //
+        /////////////////////////////////////////////////////////////
+        private static void LogThreadMetadata(ThreadInfo threadInfo)
+        {
+            try
+            {
+                StandardThreadInfo standardThread = threadInfo as StandardThreadInfo;
+                if (standardThread != null)
+                {
+                    DebugLog.WriteValue("  threadDesignation", standardThread.ThreadDesignation);
+                    DebugLog.WriteValue("  nominalSize", standardThread.NominalSize);
+                    DebugLog.WriteValue("  threadClass", standardThread.Class);
+                    DebugLog.WriteValue("  internal", standardThread.Internal);
+                    DebugLog.WriteValue("  fullThreadDepth", standardThread.FullThreadDepth);
+                    DebugLog.WriteValue("  majorDiameterMax", standardThread.MajorDiameterMax);
+                    DebugLog.WriteValue("  majorDiameterMin", standardThread.MajorDiameterMin);
+                    DebugLog.WriteValue("  minorDiameterMax", standardThread.MinorDiameterMax);
+                    DebugLog.WriteValue("  minorDiameterMin", standardThread.MinorDiameterMin);
+                    DebugLog.WriteValue("  pitchDiameterMax", standardThread.PitchDiameterMax);
+                    DebugLog.WriteValue("  pitchDiameterMin", standardThread.PitchDiameterMin);
+                    DebugLog.WriteValue("  tapDrillDiameter", standardThread.TapDrillDiameter);
+                }
+                else
+                {
+                    DebugLog.WriteValue("  threadDesignation", threadInfo == null ? "<null>" : threadInfo.ThreadDesignation);
+                    DebugLog.WriteValue("  internal", threadInfo == null ? "<null>" : threadInfo.Internal.ToString());
+                    DebugLog.WriteValue("  fullThreadDepth", threadInfo == null ? "<null>" : threadInfo.FullThreadDepth.ToString());
+                }
+            }
+            catch (Exception ex)
+            {
+                DebugLog.WriteException("LogThreadMetadata failed.", ex);
+            }
         }
 
         /////////////////////////////////////////////////////////////
@@ -865,7 +795,7 @@ namespace ThreadModeler
         {
             System.Object radius = Toolkit.GetProperty(
                threadedFace.Geometry, 
-                "Radius");
+               "Radius");
 
             return (double)radius;
         }

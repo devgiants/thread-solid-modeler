@@ -19,28 +19,28 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////-->
 <Ribbon>
 <RibbonTab ribbons="Part"
-           internalName="id_TabCoolOrange" 
-           displayName="coolOrange" 
+           internalName="id_TabThreadSolidModeler" 
+           displayName="ThreadSolidModeler" 
            targetTab="" 
            insertBefore="false">
   
-    <RibbonPanel internalName="coolOrange.ThreadModeler.PanelPart" 
-                 displayName="threadModeler"
+    <RibbonPanel internalName="ThreadSolidModeler.PanelPart" 
+                 displayName="threadSolidModeler"
                  targetPanel="" 
                  insertBefore="false">
 
-      <Button internalName="coolOrange.ThreadModeler.ThreadModelerCmd" 
+      <Button internalName="ThreadSolidModeler.ThreadModelerCmd" 
                 useLargeIcon="true" 
                 isInSlideout="false" 
                 targetControl="" 
                 insertBefore="false"/>
-      <Button internalName="coolOrange.ThreadModeler.HelpCtrlCmd"
+      <Button internalName="ThreadSolidModeler.HelpCtrlCmd"
                  useLargeIcon="false"
                  isInSlideout="true"
                  targetControl=""
                  insertBefore="false"/>
 
-      <Button internalName="coolOrange.ThreadModeler.AboutCtrlCmd"
+      <Button internalName="ThreadSolidModeler.AboutCtrlCmd"
                useLargeIcon="false"
                isInSlideout="true"
                targetControl=""

@@ -1,0 +1,15 @@
+<Addin Type="Standard">
+  <ClassId>{90f6009a-a2ed-400f-9cbd-cee55ad30d23}</ClassId>
+  <ClientId>{90f6009a-a2ed-400f-9cbd-cee55ad30d23}</ClientId>
+  <DisplayName>ThreadSolidModeler</DisplayName>
+  <Description>Inventor ThreadSolidModeler plug-in</Description>
+  <Assembly>ThreadModeler.dll</Assembly>
+  <LoadOnStartUp>1</LoadOnStartUp>
+  <UserUnloadable>1</UserUnloadable>
+  <Hidden>0</Hidden>
+  <SupportedSoftwareVersionGreaterThan>17..</SupportedSoftwareVersionGreaterThan>
+  <SupportedSoftwareVersionLessThan>31..</SupportedSoftwareVersionLessThan>
+  <DataVersion>1</DataVersion>
+  <UserInterfaceVersion>1</UserInterfaceVersion>
+  <LoadBehavior>0</LoadBehavior>
+</Addin>

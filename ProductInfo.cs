@@ -6,9 +6,9 @@
 // associated with an assembly.
 //
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("coolOrange s.r.l")]
-[assembly: AssemblyProduct("Inventor ThreadModeler addin")]
-[assembly: AssemblyCopyright("Copyright © 2015-2017 coolOrange s.r.l")]
+[assembly: AssemblyCompany("")]
+[assembly: AssemblyProduct("Inventor ThreadSolidModeler addin")]
+[assembly: AssemblyCopyright("Copyright © 2026")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 
@@ -23,8 +23,8 @@
 // You can specify all the values or you can default the Revision and Build Numbers 
 // by using the '*' as shown below:
 
-[assembly: AssemblyVersion("19.0.0.0")]
-[assembly: AssemblyFileVersion("19.0.0.0")]
+[assembly: AssemblyVersion("26.0.0.0")]
+[assembly: AssemblyFileVersion("26.0.0.0")]
 
 //
 // In order to sign your assembly you must specify a key to use. Refer to the 
