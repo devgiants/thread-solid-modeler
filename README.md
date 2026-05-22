@@ -3,7 +3,7 @@
 [![Windows](https://img.shields.io/badge/Platform-Windows-lightgray.svg)](https://www.microsoft.com/en-us/windows/)
 [![.NET Framework](https://img.shields.io/badge/.NET%20Framework-4.8-blue.svg)](https://dotnet.microsoft.com/)
 [![Autodesk Inventor](https://img.shields.io/badge/Autodesk%20Inventor-2026-yellow.svg)](https://www.autodesk.com/products/inventor/)
-[![Last release](https://img.shields.io/badge/last%20release-latest-blue.svg)](./releases/latest)
+[![Last release](https://img.shields.io/github/v/release/devgiants/thread-solid-modeler)](https://github.com/devgiants/thread-solid-modeler/releases/latest)
 
 ## Origin
 
@@ -38,14 +38,16 @@ The add-in is intentionally kept in the Part workflow only. The ribbon tab is sh
 
 ### From a GitHub release
 
+The badge above points to the latest GitHub release.
 The release workflow publishes a zip archive for every tag that starts with `v`.
 
-1. Download the latest release archive from GitHub.
-2. Extract the `ThreadSolidModeler.bundle` folder from the zip.
-3. Copy the bundle into one of these locations:
+1. Open the latest release page from the badge above.
+2. Download the release archive from GitHub.
+3. Extract the `ThreadSolidModeler.bundle` folder from the zip.
+4. Copy the bundle into one of these locations:
    - `%APPDATA%\Autodesk\ApplicationPlugins\` for the current Windows user
    - `%ProgramData%\Autodesk\ApplicationPlugins\` for all users on the machine
-4. Restart Autodesk Inventor 2026.
+5. Restart Autodesk Inventor 2026.
 
 The bundle contains the add-in manifest, the compiled assembly, the templates, and the supporting files Inventor expects at startup.
 
@@ -66,4 +68,3 @@ If you want to build it locally:
 ## Attribution
 
 The original coolOrange / Philippe Leefsma attribution is preserved in the source headers and license file.
-
