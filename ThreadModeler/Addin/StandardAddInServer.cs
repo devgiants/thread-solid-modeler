@@ -30,6 +30,7 @@ using System.Runtime.InteropServices;
 // 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 using ThreadModeler.Commands;
+using ThreadModeler;
 using ThreadModeler.Utilities;
 
 namespace ThreadModeler.Addin
@@ -79,9 +80,11 @@ namespace ThreadModeler.Addin
 
                 Toolkit.Initialize(m_inventorApplication);
                 ThreadWorker.Initialize(m_inventorApplication);
+                PrintThreadWorker.Initialize(m_inventorApplication);
                 DebugLog.WriteLine("Inventor application and workers initialized.");
 
                 AdnCommand.AddCommand(new ThreadModelerCmd(m_inventorApplication));
+                AdnCommand.AddCommand(new ThreadModeler3DPrintCmd(m_inventorApplication));
 
                 AdnCommand.AddCommand(new AboutCtrlCmd(m_inventorApplication));
 

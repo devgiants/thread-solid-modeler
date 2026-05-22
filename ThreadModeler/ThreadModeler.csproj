@@ -169,8 +169,10 @@
     <Compile Include="Commands\Controller.designer.cs">
       <DependentUpon>Controller.cs</DependentUpon>
     </Compile>
+    <Compile Include="Commands\PrintController.cs" />
     <Compile Include="Commands\AboutCtrlCmd.cs" />
     <Compile Include="Commands\HelpCtrlCmd.cs" />
+    <Compile Include="Commands\ThreadModeler3DPrintCmd.cs" />
     <Compile Include="frmSplash.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -192,6 +194,7 @@
     <Compile Include="Utilities\DebugLog.cs" />
     <Compile Include="Utilities\AdnRibbonBuilder.cs" />
     <Compile Include="Utilities\AdnWinUtilities.cs" />
+    <Compile Include="PrintThreadWorker.cs" />
     <Compile Include="Worker.cs" />
   </ItemGroup>
   <ItemGroup>

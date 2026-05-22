@@ -34,6 +34,11 @@
                 isInSlideout="false" 
                 targetControl="" 
                 insertBefore="false"/>
+      <Button internalName="ThreadSolidModeler.ThreadModeler3DPrintCmd"
+                useLargeIcon="true"
+                isInSlideout="false"
+                targetControl=""
+                insertBefore="false"/>
       <Button internalName="ThreadSolidModeler.HelpCtrlCmd"
                  useLargeIcon="false"
                  isInSlideout="true"

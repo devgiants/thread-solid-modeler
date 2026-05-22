@@ -15,7 +15,7 @@ This repository starts from that codebase and continues it for Autodesk Inventor
 ThreadSolidModeler is an Autodesk Inventor add-in that turns existing thread features into modeled 3D thread geometry.
 
 - It works on selected `ThreadFeature` objects in a Part document.
-- It exposes a single command in the Inventor ribbon for the Part environment.
+- It exposes two commands in the Inventor ribbon for the Part environment: the ISO path and a dedicated `3D Print` path.
 - It opens a modeless dialog where you choose the thread sketch template and the pitch offset.
 - It uses the thread metadata already stored by Inventor to build the modeled result.
 - It supports both standard and tapered threads.
@@ -26,10 +26,10 @@ The current default template is `ISO Template.ipt`. `BSW Template.ipt` is still 
 ## How it works
 
 1. Select one or more thread features in a Part.
-2. Launch `ThreadSolidModeler` from the ribbon.
-3. The dialog loads the default template and lets you change it if needed.
-4. The add-in reads the selected thread feature data from Inventor.
-5. It builds a modeled 3D thread from the template sketch and the thread parameters.
+2. Launch `ThreadSolidModeler` from the ribbon for the ISO workflow, or `ThreadSolidModeler 3D Print` for the print workflow.
+3. The ISO dialog loads the default template and lets you change it if needed.
+4. The 3D Print dialog reads the selected thread feature, pre-fills a trapezoidal profile from the nominal diameter, and lets you override the dimensions manually.
+5. The add-in builds a modeled 3D thread from the template sketch or the dedicated print profile.
 6. The original cosmetic thread feature is suppressed once the modeled result is created.
 
 The add-in is intentionally kept in the Part workflow only. The ribbon tab is shown for Part documents.
@@ -70,6 +70,7 @@ powershell -ExecutionPolicy Bypass -File .\build-and-deploy-release.ps1
 - The add-in targets Autodesk Inventor 2026.
 - The release package is designed as a bundle, not as a standalone DLL drop.
 - If you already have an older roaming bundle installed, remove it before testing a new release to avoid loading the wrong copy.
+- The 3D Print path uses conservative profile defaults and validates coil geometry before creating the feature to reduce coil failures.
 
 ## Attribution
 
