@@ -19,6 +19,7 @@ namespace ThreadModeler.Commands
         private bool _Cleaned;
         private bool _UpdatingFields;
         private bool _FieldsValid;
+        private bool _PresetDirty;
         private System.Windows.Forms.Timer _SelectionTimer;
         private int _SelectionFingerprint;
 
@@ -33,6 +34,7 @@ namespace ThreadModeler.Commands
         private readonly TextBox tbTopWidth;
         private readonly TextBox tbHeight;
         private readonly TextBox tbPitch;
+        private readonly TextBox tbFilletRadius;
         private readonly Button bApplyPreset;
         private readonly Button bGenerate;
         private readonly Button bCancel;
@@ -52,7 +54,8 @@ namespace ThreadModeler.Commands
             ShowInTaskbar = false;
             AutoSize = false;
             AutoSizeMode = AutoSizeMode.GrowOnly;
-            ClientSize = new System.Drawing.Size(460, 430);
+            AutoScroll = true;
+            ClientSize = new System.Drawing.Size(480, 540);
             StartPosition = FormStartPosition.CenterParent;
             Padding = new Padding(12);
 
@@ -67,6 +70,7 @@ namespace ThreadModeler.Commands
             tbTopWidth = CreateEditableBox();
             tbHeight = CreateEditableBox();
             tbPitch = CreateEditableBox();
+            tbFilletRadius = CreateEditableBox();
             bApplyPreset = new Button();
             bGenerate = new Button();
             bCancel = new Button();
@@ -77,6 +81,7 @@ namespace ThreadModeler.Commands
             tbTopWidth.TextChanged += NumericField_TextChanged;
             tbHeight.TextChanged += NumericField_TextChanged;
             tbPitch.TextChanged += NumericField_TextChanged;
+            tbFilletRadius.TextChanged += NumericField_TextChanged;
             bApplyPreset.Click += bApplyPreset_Click;
             bGenerate.Click += bGenerate_Click;
             bCancel.Click += bCancel_Click;
@@ -127,8 +132,8 @@ namespace ThreadModeler.Commands
             TableLayoutPanel selectionGrid = CreateGrid(2, 5);
             gbSelection.Controls.Add(selectionGrid);
             AddRow(selectionGrid, 0, "Thread", tbThread);
-            AddRow(selectionGrid, 1, "Nominal diameter", tbNominalDiameter);
-            AddRow(selectionGrid, 2, "Useful length", tbUsefulLength);
+            AddRow(selectionGrid, 1, "Nominal diameter (mm)", tbNominalDiameter);
+            AddRow(selectionGrid, 2, "Useful length (mm)", tbUsefulLength);
             AddRow(selectionGrid, 3, "Thread type", tbThreadType);
             AddRow(selectionGrid, 4, "Face type", tbFaceType);
 
@@ -138,15 +143,16 @@ namespace ThreadModeler.Commands
             gbPreset.Padding = new Padding(12, 18, 12, 12);
             root.Controls.Add(gbPreset, 0, 2);
 
-            TableLayoutPanel presetGrid = CreateGrid(3, 5);
+            TableLayoutPanel presetGrid = CreateGrid(3, 6);
             gbPreset.Controls.Add(presetGrid);
-            bApplyPreset.Text = "Apply";
+            bApplyPreset.Text = "Reset preset";
             bApplyPreset.Width = 75;
             AddRow(presetGrid, 0, "Preset", tbPresetName, bApplyPreset);
-            AddRow(presetGrid, 1, "Base width", tbBaseWidth);
-            AddRow(presetGrid, 2, "Top width", tbTopWidth);
-            AddRow(presetGrid, 3, "Height", tbHeight);
-            AddRow(presetGrid, 4, "Pitch", tbPitch);
+            AddRow(presetGrid, 1, "Base width (mm)", tbBaseWidth);
+            AddRow(presetGrid, 2, "Top width (mm)", tbTopWidth);
+            AddRow(presetGrid, 3, "Height (mm)", tbHeight);
+            AddRow(presetGrid, 4, "Pitch (mm)", tbPitch);
+            AddRow(presetGrid, 5, "Fillet radius (mm)", tbFilletRadius);
 
             FlowLayoutPanel buttons = new FlowLayoutPanel();
             buttons.FlowDirection = FlowDirection.RightToLeft;
@@ -172,8 +178,8 @@ namespace ThreadModeler.Commands
             root.Controls.Add(lbStatus, 0, 4);
 
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 26F));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 36F));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 44F));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 30F));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 24F));
         }
@@ -307,7 +313,6 @@ namespace ThreadModeler.Commands
 
             _SelectionFingerprint = fingerprint;
             _Context = null;
-            _Preset = null;
             string firstError = string.Empty;
             int selectionCount = 0;
 
@@ -356,7 +361,18 @@ namespace ThreadModeler.Commands
             }
 
             PopulateFieldsFromContext();
-            ApplyPresetFromContext();
+            if (!_PresetDirty)
+            {
+                ApplyPresetFromContext();
+            }
+            else
+            {
+                lbStatus.Text = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Selected {0} with nominal size {1}. Custom values kept.",
+                    tbThread.Text,
+                    _Context.NominalLabel);
+            }
         }
 
         private System.Collections.Generic.List<object> GetSelectedCandidates()
@@ -445,8 +461,8 @@ namespace ThreadModeler.Commands
             _UpdatingFields = true;
 
             tbThread.Text = _Context.ThreadFeature == null ? string.Empty : _Context.ThreadFeature.Name;
-            tbNominalDiameter.Text = FormatLength(_Context.NominalDiameterCm);
-            tbUsefulLength.Text = FormatLength(_Context.UsefulLengthCm);
+            tbNominalDiameter.Text = FormatCmAsMm(_Context.NominalDiameterCm);
+            tbUsefulLength.Text = FormatCmAsMm(_Context.UsefulLengthCm);
             tbThreadType.Text = ThreadWorker.GetThreadTypeStr(_Context.Feature);
             tbFaceType.Text = ThreadWorker.GetThreadedFaceTypeStr(_Context.ThreadedFace);
             lbStatus.Text = string.Format(
@@ -469,11 +485,13 @@ namespace ThreadModeler.Commands
 
             _UpdatingFields = true;
             tbPresetName.Text = _Preset.Name;
-            tbBaseWidth.Text = FormatLength(_Preset.BaseWidthCm);
-            tbTopWidth.Text = FormatLength(_Preset.TopWidthCm);
-            tbHeight.Text = FormatLength(_Preset.HeightCm);
-            tbPitch.Text = FormatLength(_Preset.PitchCm);
+            tbBaseWidth.Text = FormatCmAsMm(_Preset.BaseWidthCm);
+            tbTopWidth.Text = FormatCmAsMm(_Preset.TopWidthCm);
+            tbHeight.Text = FormatCmAsMm(_Preset.HeightCm);
+            tbPitch.Text = FormatCmAsMm(_Preset.PitchCm);
+            tbFilletRadius.Text = FormatCmAsMm(_Preset.FilletRadiusCm);
             _UpdatingFields = false;
+            _PresetDirty = false;
 
             ValidateEditableFields();
             UpdateButtons();
@@ -492,12 +510,15 @@ namespace ThreadModeler.Commands
             tbTopWidth.Text = string.Empty;
             tbHeight.Text = string.Empty;
             tbPitch.Text = string.Empty;
+            tbFilletRadius.Text = string.Empty;
             tbBaseWidth.ForeColor = System.Drawing.Color.Black;
             tbTopWidth.ForeColor = System.Drawing.Color.Black;
             tbHeight.ForeColor = System.Drawing.Color.Black;
             tbPitch.ForeColor = System.Drawing.Color.Black;
+            tbFilletRadius.ForeColor = System.Drawing.Color.Black;
             _UpdatingFields = false;
             _FieldsValid = false;
+            _PresetDirty = false;
         }
 
         private void NumericField_TextChanged(object sender, EventArgs e)
@@ -507,6 +528,7 @@ namespace ThreadModeler.Commands
                 return;
             }
 
+            _PresetDirty = true;
             ValidateEditableFields();
             UpdateButtons();
         }
@@ -517,19 +539,23 @@ namespace ThreadModeler.Commands
             double topWidth;
             double height;
             double pitch;
+            double filletRadius;
 
-            bool baseValid = TryReadLength(tbBaseWidth.Text, out baseWidth);
-            bool topValid = TryReadLength(tbTopWidth.Text, out topWidth);
-            bool heightValid = TryReadLength(tbHeight.Text, out height);
-            bool pitchValid = TryReadLength(tbPitch.Text, out pitch);
+            bool baseValid = TryReadMmAsCm(tbBaseWidth.Text, out baseWidth);
+            bool topValid = TryReadMmAsCm(tbTopWidth.Text, out topWidth);
+            bool heightValid = TryReadMmAsCm(tbHeight.Text, out height);
+            bool pitchValid = TryReadMmAsCm(tbPitch.Text, out pitch);
+            bool filletValid = TryReadMmAsCm(tbFilletRadius.Text, out filletRadius);
 
             SetFieldState(tbBaseWidth, baseValid);
             SetFieldState(tbTopWidth, topValid);
             SetFieldState(tbHeight, heightValid);
             SetFieldState(tbPitch, pitchValid);
+            SetFieldState(tbFilletRadius, filletValid);
 
             _FieldsValid = baseValid && topValid && heightValid && pitchValid &&
-                baseWidth > 0.0 && topWidth > 0.0 && height > 0.0 && pitch > 0.0 &&
+                filletValid &&
+                baseWidth > 0.0 && topWidth > 0.0 && height > 0.0 && pitch > 0.0 && filletRadius >= 0.0 &&
                 topWidth < baseWidth &&
                 pitch >= baseWidth * 0.75 &&
                 _Context != null;
@@ -561,14 +587,16 @@ namespace ThreadModeler.Commands
             double topWidth;
             double height;
             double pitch;
+            double filletRadius;
 
-            if (!TryReadLength(tbBaseWidth.Text, out baseWidth) ||
-                !TryReadLength(tbTopWidth.Text, out topWidth) ||
-                !TryReadLength(tbHeight.Text, out height) ||
-                !TryReadLength(tbPitch.Text, out pitch))
+            if (!TryReadMmAsCm(tbBaseWidth.Text, out baseWidth) ||
+                !TryReadMmAsCm(tbTopWidth.Text, out topWidth) ||
+                !TryReadMmAsCm(tbHeight.Text, out height) ||
+                !TryReadMmAsCm(tbPitch.Text, out pitch) ||
+                !TryReadMmAsCm(tbFilletRadius.Text, out filletRadius))
             {
                 MessageBox.Show(
-                    "Fix the profile dimensions before generating the print thread.",
+                    "Fix the profile values before generating the print thread.",
                     "Invalid Parameters",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
@@ -581,7 +609,8 @@ namespace ThreadModeler.Commands
                 BaseWidthCm = baseWidth,
                 TopWidthCm = topWidth,
                 HeightCm = height,
-                PitchCm = pitch
+                PitchCm = pitch,
+                FilletRadiusCm = filletRadius
             };
 
             string errorMessage;
@@ -594,6 +623,8 @@ namespace ThreadModeler.Commands
                     MessageBoxIcon.Error);
                 return;
             }
+
+            _PresetDirty = false;
 
             if (!_Cleaned)
             {
@@ -616,25 +647,30 @@ namespace ThreadModeler.Commands
         private void UpdateButtons()
         {
             bGenerate.Enabled = (_Context != null && _FieldsValid);
+            bApplyPreset.Enabled = (_Context != null);
         }
 
-        private static bool TryReadLength(string text, out double value)
+        private static bool TryReadMmAsCm(string text, out double value)
         {
-            return double.TryParse(
-                       text,
-                       NumberStyles.Float,
-                       CultureInfo.CurrentCulture,
-                       out value)
-                   || double.TryParse(
-                       text,
-                       NumberStyles.Float,
-                       CultureInfo.InvariantCulture,
-                       out value);
+            double valueMm;
+            bool parsed = double.TryParse(
+                              text,
+                              NumberStyles.Float,
+                              CultureInfo.CurrentCulture,
+                              out valueMm)
+                          || double.TryParse(
+                              text,
+                              NumberStyles.Float,
+                              CultureInfo.InvariantCulture,
+                              out valueMm);
+
+            value = parsed ? valueMm * 0.1 : 0.0;
+            return parsed;
         }
 
-        private static string FormatLength(double value)
+        private static string FormatCmAsMm(double valueCm)
         {
-            return value.ToString("0.###", CultureInfo.CurrentCulture);
+            return (valueCm * 10.0).ToString("0.###", CultureInfo.CurrentCulture);
         }
 
         private void CleanUp()

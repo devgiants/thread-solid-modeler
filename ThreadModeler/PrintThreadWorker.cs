@@ -21,6 +21,7 @@ namespace ThreadModeler
         public double TopWidthCm { get; set; }
         public double HeightCm { get; set; }
         public double PitchCm { get; set; }
+        public double FilletRadiusCm { get; set; }
     }
 
     internal sealed class PrintThreadContext
@@ -170,12 +171,16 @@ namespace ThreadModeler
             double baseWidthMm = pitchMm * 0.70;
             double topWidthMm = pitchMm * 0.35;
             double heightMm = pitchMm * 0.50;
+            double filletRadiusMm = Math.Min(
+                pitchMm * 0.10,
+                Math.Min(heightMm, topWidthMm) * 0.20);
 
             // Keep the profile conservative and inside the available diameter envelope.
             double maxProfileWidthMm = Math.Max(0.0, nominalDiameterMm * 0.85);
             baseWidthMm = Clamp(baseWidthMm, pitchMm * 0.25, maxProfileWidthMm);
             topWidthMm = Clamp(topWidthMm, pitchMm * 0.15, baseWidthMm * 0.90);
             heightMm = Clamp(heightMm, pitchMm * 0.20, Math.Max(0.1, nominalDiameterMm * 0.20));
+            filletRadiusMm = Clamp(filletRadiusMm, 0.0, Math.Min(Math.Min(baseWidthMm, topWidthMm), heightMm) * 0.20);
 
             return new PrintThreadPreset
             {
@@ -183,7 +188,8 @@ namespace ThreadModeler
                 BaseWidthCm = baseWidthMm * 0.1,
                 TopWidthCm = topWidthMm * 0.1,
                 HeightCm = heightMm * 0.1,
-                PitchCm = pitchMm * 0.1
+                PitchCm = pitchMm * 0.1,
+                FilletRadiusCm = filletRadiusMm * 0.1
             };
         }
 
@@ -225,65 +231,92 @@ namespace ThreadModeler
                 }
 
                 double centerRadius = GetReferenceRadiusCm(context);
-                double radialOffset = Math.Max(preset.HeightCm * 0.50, centerRadius - preset.HeightCm * 0.50);
-                if (radialOffset <= 0.0)
+                double topRadius = centerRadius;
+                double baseRadius = context.IsInteriorFace
+                    ? centerRadius + preset.HeightCm
+                    : centerRadius - preset.HeightCm;
+
+                if (baseRadius <= 0.0 || topRadius <= 0.0)
                 {
-                    errorMessage = "Computed profile offset is invalid.";
+                    errorMessage = "Computed profile radius is invalid.";
                     tx.Abort();
                     return false;
                 }
 
-                WorkAxis sketchAxis = doc.ComponentDefinition.WorkAxes.AddFixed(
-                    basePoint,
-                    threadAxis,
-                    true);
-
-                WorkAxis radialWorkAxis = doc.ComponentDefinition.WorkAxes.AddFixed(
-                    basePoint,
-                    radialAxis,
-                    true);
-
-                WorkPlane sketchPlane = doc.ComponentDefinition.WorkPlanes.AddByTwoLines(
-                    sketchAxis,
-                    radialWorkAxis,
-                    true);
-
-                WorkPoint sketchOrigin = doc.ComponentDefinition.WorkPoints.AddFixed(
-                    basePoint,
-                    true);
-
-                PlanarSketch sketch = doc.ComponentDefinition.Sketches.AddWithOrientation(
-                    sketchPlane,
-                    sketchAxis,
-                    true,
-                    true,
-                    sketchOrigin,
-                    false);
-
-                ObjectCollection profileSegments = DrawTrapezoidProfile(sketch, preset, radialOffset);
-
-                Profile profile = sketch.Profiles.AddForSolid(false, profileSegments, null);
-
+                double effectiveFilletRadius = GetEffectiveFilletRadiusCm(preset);
                 bool clockwise = !context.ThreadInfo.RightHanded;
-                double coilHeight = context.UsefulLengthCm + (2.0 * preset.PitchCm);
+                double leadInLength = Math.Min(
+                    Math.Max(preset.PitchCm, context.PitchCm),
+                    Math.Max(context.UsefulLengthCm * 0.25, preset.PitchCm));
+                double leadInTaper = GetLeadInTaperRadians(
+                    preset,
+                    leadInLength,
+                    context.IsInteriorFace);
+                double mainHeight = Math.Max(preset.PitchCm, context.UsefulLengthCm + (2.0 * preset.PitchCm) - leadInLength);
 
-                CoilFeature coil = doc.ComponentDefinition.Features.CoilFeatures.AddByPitchAndHeight(
-                    profile,
-                    sketchAxis,
+                DebugLog.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Print section params: pitch={0}cm baseWidth={1}cm topWidth={2}cm height={3}cm filletRadius={4}cm centerRadius={5}cm baseRadius={6}cm topRadius={7}cm leadInLength={8}cm leadInTaper={9}rad mainHeight={10}cm clockwise={11} interior={12}",
                     preset.PitchCm,
-                    coilHeight,
-                    PartFeatureOperationEnum.kCutOperation,
-                    false,
+                    preset.BaseWidthCm,
+                    preset.TopWidthCm,
+                    preset.HeightCm,
+                    preset.FilletRadiusCm,
+                    centerRadius,
+                    baseRadius,
+                    topRadius,
+                    leadInLength,
+                    leadInTaper,
+                    mainHeight,
                     clockwise,
-                    0.0,
-                    false,
-                    0.0,
-                    0.0,
-                    false,
-                    0.0,
-                    0.0);
+                    context.IsInteriorFace));
 
-                if (coil == null || coil.HealthStatus != HealthStatusEnum.kUpToDateHealth)
+                Point leadInBasePoint = basePoint;
+                Point mainBasePoint = OffsetPoint(basePoint, threadAxis, leadInLength);
+
+                CoilFeature leadInCoil;
+                if (!TryCreateCoilSection(
+                    doc,
+                    leadInBasePoint,
+                    threadAxis,
+                    radialAxis,
+                    preset,
+                    baseRadius,
+                    topRadius,
+                    context.IsInteriorFace,
+                    effectiveFilletRadius,
+                    leadInLength,
+                    leadInTaper,
+                    clockwise,
+                    out leadInCoil))
+                {
+                    DebugLog.WriteLine("Lead-in ramp creation failed; continuing with the main thread only.");
+                }
+                else
+                {
+                    DebugLog.WriteLine(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "Lead-in ramp created length={0} taper={1} interior={2}",
+                        leadInLength,
+                        leadInTaper,
+                        context.IsInteriorFace));
+                }
+
+                CoilFeature coil;
+                if (!TryCreateCoilSection(
+                    doc,
+                    mainBasePoint,
+                    threadAxis,
+                    radialAxis,
+                    preset,
+                    baseRadius,
+                    topRadius,
+                    context.IsInteriorFace,
+                    effectiveFilletRadius,
+                    mainHeight,
+                    0.0,
+                    clockwise,
+                    out coil))
                 {
                     errorMessage = "Inventor returned an unhealthy coil feature.";
                     tx.Abort();
@@ -314,21 +347,116 @@ namespace ThreadModeler
         private static ObjectCollection DrawTrapezoidProfile(
             PlanarSketch sketch,
             PrintThreadPreset preset,
-            double radialOffset)
+            double baseRadius,
+            double topRadius,
+            bool isInteriorFace)
         {
             ObjectCollection segments = _Application.TransientObjects.CreateObjectCollection();
 
-            double baseWidth = preset.BaseWidthCm;
-            double topWidth = preset.TopWidthCm;
+            // External modeled threads are created by cutting a groove, so the sketch
+            // must be the complement of the visible thread profile.
+            double cutBaseWidth = isInteriorFace ? preset.BaseWidthCm : preset.TopWidthCm;
+            double cutTopWidth = isInteriorFace ? preset.TopWidthCm : preset.BaseWidthCm;
             double height = preset.HeightCm;
 
-            double taper = Math.Max(0.0, (baseWidth - topWidth) * 0.5);
+            double maxWidth = Math.Max(cutBaseWidth, cutTopWidth);
+            double baseInset = (maxWidth - cutBaseWidth) * 0.5;
+            double topInset = (maxWidth - cutTopWidth) * 0.5;
 
-            Point2d p1 = _Tg.CreatePoint2d(0.0, radialOffset);
-            Point2d p2 = _Tg.CreatePoint2d(baseWidth, radialOffset);
-            Point2d p3 = _Tg.CreatePoint2d(baseWidth - taper, radialOffset + height);
-            Point2d p4 = _Tg.CreatePoint2d(taper, radialOffset + height);
+            DebugLog.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "Trapezoid profile: visibleBaseWidth={0}cm visibleTopWidth={1}cm cutBaseWidth={2}cm cutTopWidth={3}cm height={4}cm baseRadius={5}cm topRadius={6}cm interior={7}",
+                preset.BaseWidthCm,
+                preset.TopWidthCm,
+                cutBaseWidth,
+                cutTopWidth,
+                height,
+                baseRadius,
+                topRadius,
+                isInteriorFace));
 
+            Point2d p1 = _Tg.CreatePoint2d(baseInset, baseRadius);
+            Point2d p2 = _Tg.CreatePoint2d(baseInset + cutBaseWidth, baseRadius);
+            Point2d p3 = _Tg.CreatePoint2d(topInset + cutTopWidth, topRadius);
+            Point2d p4 = _Tg.CreatePoint2d(topInset, topRadius);
+
+            double requestedFilletRadius = GetEffectiveFilletRadiusCm(preset);
+            double safeFilletRadius = requestedFilletRadius > 0.0
+                ? GetMaxRoundedTrapezoidRadiusCm(p1, p2, p3, p4)
+                : 0.0;
+
+            if (requestedFilletRadius > 0.0)
+            {
+                DebugLog.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Trapezoid fillet request: requested={0}cm safeMax={1}cm",
+                    requestedFilletRadius,
+                    safeFilletRadius));
+            }
+
+            if (requestedFilletRadius > 0.0 && safeFilletRadius > 0.0 && requestedFilletRadius <= safeFilletRadius)
+            {
+                if (TryCreateRoundedCrestProfile(
+                    sketch,
+                    p1,
+                    p2,
+                    p3,
+                    p4,
+                    requestedFilletRadius,
+                    segments))
+                {
+                    DebugLog.WriteLine(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "Rounded crest trapezoid profile created: radius={0}cm",
+                        requestedFilletRadius));
+                }
+                else
+                {
+                    DebugLog.WriteLine(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "Rounded crest trapezoid disabled after geometry build failure: requested={0}cm",
+                        requestedFilletRadius));
+                    BuildSharpTrapezoidProfile(sketch, p1, p2, p3, p4, segments);
+                }
+            }
+            else
+            {
+                if (requestedFilletRadius > 0.0)
+                {
+                    DebugLog.WriteLine(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "Trapezoid fillet suppressed: requested={0}cm safeMax={1}cm",
+                        requestedFilletRadius,
+                        safeFilletRadius));
+                }
+
+                BuildSharpTrapezoidProfile(sketch, p1, p2, p3, p4, segments);
+            }
+
+            DebugLog.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "Trapezoid points: p1=({0},{1}) p2=({2},{3}) p3=({4},{5}) p4=({6},{7}) segmentCount={8}",
+                p1.X,
+                p1.Y,
+                p2.X,
+                p2.Y,
+                p3.X,
+                p3.Y,
+                p4.X,
+                p4.Y,
+                segments.Count));
+
+            return segments;
+        }
+
+        private static void BuildSharpTrapezoidProfile(
+            PlanarSketch sketch,
+            Point2d p1,
+            Point2d p2,
+            Point2d p3,
+            Point2d p4,
+            ObjectCollection segments)
+        {
             SketchPoint sp1 = sketch.SketchPoints.Add(p1, false);
             SketchPoint sp2 = sketch.SketchPoints.Add(p2, false);
             SketchPoint sp3 = sketch.SketchPoints.Add(p3, false);
@@ -338,8 +466,325 @@ namespace ThreadModeler
             segments.Add(sketch.SketchLines.AddByTwoPoints(sp2, sp3));
             segments.Add(sketch.SketchLines.AddByTwoPoints(sp3, sp4));
             segments.Add(sketch.SketchLines.AddByTwoPoints(sp4, sp1));
+        }
 
-            return segments;
+        private static bool TryCreateRoundedCrestProfile(
+            PlanarSketch sketch,
+            Point2d p1,
+            Point2d p2,
+            Point2d p3,
+            Point2d p4,
+            double filletRadius,
+            ObjectCollection segments)
+        {
+            RoundedCorner crestRight;
+            RoundedCorner crestLeft;
+
+            if (!TryBuildRoundedCorner(p2, p3, p4, filletRadius, out crestRight) ||
+                !TryBuildRoundedCorner(p3, p4, p1, filletRadius, out crestLeft))
+            {
+                return false;
+            }
+
+            SketchPoint sp1 = sketch.SketchPoints.Add(p1, false);
+            SketchPoint sp2 = sketch.SketchPoints.Add(p2, false);
+            SketchPoint sp3 = sketch.SketchPoints.Add(p3, false);
+            SketchPoint sp4 = sketch.SketchPoints.Add(p4, false);
+
+            SketchPoint crestRightIn = sketch.SketchPoints.Add(crestRight.InPoint, false);
+            SketchPoint crestRightOut = sketch.SketchPoints.Add(crestRight.OutPoint, false);
+            SketchPoint crestLeftIn = sketch.SketchPoints.Add(crestLeft.InPoint, false);
+            SketchPoint crestLeftOut = sketch.SketchPoints.Add(crestLeft.OutPoint, false);
+
+            segments.Add(sketch.SketchLines.AddByTwoPoints(sp1, sp2));
+            segments.Add(sketch.SketchLines.AddByTwoPoints(sp2, crestRightIn));
+            segments.Add(sketch.SketchArcs.AddByThreePoints(crestRightIn, crestRight.MidPoint, crestRightOut));
+            segments.Add(sketch.SketchLines.AddByTwoPoints(crestRightOut, crestLeftIn));
+            segments.Add(sketch.SketchArcs.AddByThreePoints(crestLeftIn, crestLeft.MidPoint, crestLeftOut));
+            segments.Add(sketch.SketchLines.AddByTwoPoints(crestLeftOut, sp1));
+
+            return true;
+        }
+
+        private static bool TryCreateCoilSection(
+            PartDocument doc,
+            Point basePoint,
+            UnitVector threadAxis,
+            UnitVector radialAxis,
+            PrintThreadPreset preset,
+            double baseRadius,
+            double topRadius,
+            bool isInteriorFace,
+            double filletRadius,
+            double coilHeight,
+            double taper,
+            bool clockwise,
+            out CoilFeature coil)
+        {
+            coil = null;
+
+            try
+            {
+                WorkAxis sketchAxis = doc.ComponentDefinition.WorkAxes.AddFixed(
+                    basePoint,
+                    threadAxis,
+                    true);
+
+                WorkAxis radialWorkAxis = doc.ComponentDefinition.WorkAxes.AddFixed(
+                    basePoint,
+                    radialAxis,
+                    true);
+
+                WorkPlane sketchPlane = doc.ComponentDefinition.WorkPlanes.AddByTwoLines(
+                    sketchAxis,
+                    radialWorkAxis,
+                    true);
+
+                WorkPoint sketchOrigin = doc.ComponentDefinition.WorkPoints.AddFixed(
+                    basePoint,
+                    true);
+
+                PlanarSketch sketch = doc.ComponentDefinition.Sketches.AddWithOrientation(
+                    sketchPlane,
+                    sketchAxis,
+                    true,
+                    true,
+                    sketchOrigin,
+                    false);
+
+                ObjectCollection profileSegments = DrawTrapezoidProfile(
+                    sketch,
+                    preset,
+                    baseRadius,
+                    topRadius,
+                    isInteriorFace);
+
+                DebugLog.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "TryCreateCoilSection: basePoint=({0},{1},{2}) coilHeight={3} taper={4} filletRadius={5} clockwise={6} baseRadius={7} topRadius={8} interior={9} profileSegments={10}",
+                    basePoint.X,
+                    basePoint.Y,
+                    basePoint.Z,
+                    coilHeight,
+                    taper,
+                    filletRadius,
+                    clockwise,
+                    baseRadius,
+                    topRadius,
+                    isInteriorFace,
+                    profileSegments == null ? 0 : profileSegments.Count));
+
+                Profile profile = sketch.Profiles.AddForSolid(false, profileSegments, null);
+
+                coil = doc.ComponentDefinition.Features.CoilFeatures.AddByPitchAndHeight(
+                    profile,
+                    sketchAxis,
+                    preset.PitchCm,
+                    coilHeight,
+                    PartFeatureOperationEnum.kCutOperation,
+                    false,
+                    clockwise,
+                    taper,
+                    false,
+                    0.0,
+                    0.0,
+                    false,
+                    0.0,
+                    0.0);
+
+                return (coil != null && coil.HealthStatus == HealthStatusEnum.kUpToDateHealth);
+            }
+            catch (Exception ex)
+            {
+                DebugLog.WriteException("TryCreateCoilSection failed.", ex);
+                coil = null;
+                return false;
+            }
+        }
+
+        private static Point OffsetPoint(
+            Point basePoint,
+            UnitVector direction,
+            double distance)
+        {
+            return _Tg.CreatePoint(
+                basePoint.X + direction.X * distance,
+                basePoint.Y + direction.Y * distance,
+                basePoint.Z + direction.Z * distance);
+        }
+
+        private static double GetEffectiveFilletRadiusCm(PrintThreadPreset preset)
+        {
+            if (preset == null || preset.FilletRadiusCm <= 0.0)
+            {
+                return 0.0;
+            }
+
+            double minDimension = Math.Min(
+                Math.Min(preset.BaseWidthCm, preset.TopWidthCm),
+                preset.HeightCm);
+
+            double safeRadius = minDimension * 0.20;
+            if (safeRadius <= 0.0 || preset.FilletRadiusCm > safeRadius)
+            {
+                DebugLog.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Trapezoid fillet suppressed: requested={0}cm safeMax={1}cm minDimension={2}cm",
+                    preset.FilletRadiusCm,
+                    safeRadius,
+                    minDimension));
+                return 0.0;
+            }
+
+            return preset.FilletRadiusCm;
+        }
+
+        private static double GetMaxRoundedTrapezoidRadiusCm(
+            Point2d p1,
+            Point2d p2,
+            Point2d p3,
+            Point2d p4)
+        {
+            double crestRightRadius = GetCornerMaxRadiusCm(p2, p3, p4);
+            double crestLeftRadius = GetCornerMaxRadiusCm(p3, p4, p1);
+
+            return Math.Min(crestRightRadius, crestLeftRadius);
+        }
+
+        private static double GetCornerMaxRadiusCm(
+            Point2d prev,
+            Point2d corner,
+            Point2d next)
+        {
+            double prevDx = prev.X - corner.X;
+            double prevDy = prev.Y - corner.Y;
+            double nextDx = next.X - corner.X;
+            double nextDy = next.Y - corner.Y;
+
+            double prevLength = Math.Sqrt((prevDx * prevDx) + (prevDy * prevDy));
+            double nextLength = Math.Sqrt((nextDx * nextDx) + (nextDy * nextDy));
+            if (prevLength <= 0.0 || nextLength <= 0.0)
+            {
+                return 0.0;
+            }
+
+            double prevUx = prevDx / prevLength;
+            double prevUy = prevDy / prevLength;
+            double nextUx = nextDx / nextLength;
+            double nextUy = nextDy / nextLength;
+
+            double dot = (prevUx * nextUx) + (prevUy * nextUy);
+            dot = Math.Max(-1.0, Math.Min(1.0, dot));
+
+            double angle = Math.Acos(dot);
+            if (angle <= 0.0 || angle >= Math.PI)
+            {
+                return 0.0;
+            }
+
+            double tangentDistance = Math.Min(prevLength, nextLength) * 0.45;
+            double maxRadius = tangentDistance / Math.Tan(angle * 0.5);
+            return Math.Max(0.0, maxRadius);
+        }
+
+        private sealed class RoundedCorner
+        {
+            public Point2d InPoint { get; set; }
+            public Point2d OutPoint { get; set; }
+            public Point2d MidPoint { get; set; }
+        }
+
+        private static bool TryBuildRoundedCorner(
+            Point2d prev,
+            Point2d corner,
+            Point2d next,
+            double radius,
+            out RoundedCorner result)
+        {
+            result = null;
+
+            double prevDx = prev.X - corner.X;
+            double prevDy = prev.Y - corner.Y;
+            double nextDx = next.X - corner.X;
+            double nextDy = next.Y - corner.Y;
+
+            double prevLength = Math.Sqrt((prevDx * prevDx) + (prevDy * prevDy));
+            double nextLength = Math.Sqrt((nextDx * nextDx) + (nextDy * nextDy));
+            if (prevLength <= 0.0 || nextLength <= 0.0)
+            {
+                return false;
+            }
+
+            double prevUx = prevDx / prevLength;
+            double prevUy = prevDy / prevLength;
+            double nextUx = nextDx / nextLength;
+            double nextUy = nextDy / nextLength;
+
+            double dot = (prevUx * nextUx) + (prevUy * nextUy);
+            dot = Math.Max(-1.0, Math.Min(1.0, dot));
+
+            double angle = Math.Acos(dot);
+            if (angle <= 0.0 || angle >= Math.PI)
+            {
+                return false;
+            }
+
+            double tangentDistance = radius * Math.Tan(angle * 0.5);
+            if (tangentDistance <= 0.0 ||
+                tangentDistance >= prevLength ||
+                tangentDistance >= nextLength)
+            {
+                return false;
+            }
+
+            double bisectorX = prevUx + nextUx;
+            double bisectorY = prevUy + nextUy;
+            double bisectorLength = Math.Sqrt((bisectorX * bisectorX) + (bisectorY * bisectorY));
+            if (bisectorLength <= 0.0)
+            {
+                return false;
+            }
+
+            double centerDistance = radius / Math.Sin(angle * 0.5);
+            double centerX = corner.X + ((bisectorX / bisectorLength) * centerDistance);
+            double centerY = corner.Y + ((bisectorY / bisectorLength) * centerDistance);
+
+            double cornerVectorX = corner.X - centerX;
+            double cornerVectorY = corner.Y - centerY;
+            double cornerVectorLength = Math.Sqrt((cornerVectorX * cornerVectorX) + (cornerVectorY * cornerVectorY));
+            if (cornerVectorLength <= 0.0)
+            {
+                return false;
+            }
+
+            double midX = centerX + ((cornerVectorX / cornerVectorLength) * radius);
+            double midY = centerY + ((cornerVectorY / cornerVectorLength) * radius);
+
+            result = new RoundedCorner
+            {
+                InPoint = _Tg.CreatePoint2d(
+                    corner.X + (prevUx * tangentDistance),
+                    corner.Y + (prevUy * tangentDistance)),
+                OutPoint = _Tg.CreatePoint2d(
+                    corner.X + (nextUx * tangentDistance),
+                    corner.Y + (nextUy * tangentDistance)),
+                MidPoint = _Tg.CreatePoint2d(midX, midY)
+            };
+
+            return true;
+        }
+
+        private static double GetLeadInTaperRadians(
+            PrintThreadPreset preset,
+            double leadInLength,
+            bool isInteriorFace)
+        {
+            double span = Math.Max(leadInLength, preset.PitchCm * 0.25);
+            double rise = Math.Max(preset.HeightCm * 0.35, preset.HeightCm * 0.15);
+            double taper = Math.Atan(rise / span);
+            taper = Math.Max(0.08, Math.Min(0.30, taper));
+
+            return isInteriorFace ? -taper : taper;
         }
 
         private static bool ValidatePreset(
