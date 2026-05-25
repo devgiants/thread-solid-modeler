@@ -245,18 +245,12 @@ namespace ThreadModeler
 
                 double effectiveFilletRadius = GetEffectiveFilletRadiusCm(preset);
                 bool clockwise = !context.ThreadInfo.RightHanded;
-                double leadInLength = Math.Min(
-                    Math.Max(preset.PitchCm, context.PitchCm),
-                    Math.Max(context.UsefulLengthCm * 0.25, preset.PitchCm));
-                double leadInTaper = GetLeadInTaperRadians(
-                    preset,
-                    leadInLength,
-                    context.IsInteriorFace);
-                double mainHeight = Math.Max(preset.PitchCm, context.UsefulLengthCm + (2.0 * preset.PitchCm) - leadInLength);
+                double leadInLength = GetLeadInLengthCm(context, preset);
+                double mainHeight = Math.Max(preset.PitchCm, context.UsefulLengthCm + (2.0 * preset.PitchCm));
 
                 DebugLog.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
-                    "Print section params: pitch={0}cm baseWidth={1}cm topWidth={2}cm height={3}cm filletRadius={4}cm centerRadius={5}cm baseRadius={6}cm topRadius={7}cm leadInLength={8}cm leadInTaper={9}rad mainHeight={10}cm clockwise={11} interior={12}",
+                    "Print section params: pitch={0}cm baseWidth={1}cm topWidth={2}cm height={3}cm filletRadius={4}cm centerRadius={5}cm baseRadius={6}cm topRadius={7}cm leadInLength={8}cm mainHeight={9}cm clockwise={10} interior={11}",
                     preset.PitchCm,
                     preset.BaseWidthCm,
                     preset.TopWidthCm,
@@ -266,46 +260,14 @@ namespace ThreadModeler
                     baseRadius,
                     topRadius,
                     leadInLength,
-                    leadInTaper,
                     mainHeight,
                     clockwise,
                     context.IsInteriorFace));
 
-                Point leadInBasePoint = basePoint;
-                Point mainBasePoint = OffsetPoint(basePoint, threadAxis, leadInLength);
-
-                CoilFeature leadInCoil;
-                if (!TryCreateCoilSection(
-                    doc,
-                    leadInBasePoint,
-                    threadAxis,
-                    radialAxis,
-                    preset,
-                    baseRadius,
-                    topRadius,
-                    context.IsInteriorFace,
-                    effectiveFilletRadius,
-                    leadInLength,
-                    leadInTaper,
-                    clockwise,
-                    out leadInCoil))
-                {
-                    DebugLog.WriteLine("Lead-in ramp creation failed; continuing with the main thread only.");
-                }
-                else
-                {
-                    DebugLog.WriteLine(string.Format(
-                        CultureInfo.InvariantCulture,
-                        "Lead-in ramp created length={0} taper={1} interior={2}",
-                        leadInLength,
-                        leadInTaper,
-                        context.IsInteriorFace));
-                }
-
                 CoilFeature coil;
                 if (!TryCreateCoilSection(
                     doc,
-                    mainBasePoint,
+                    basePoint,
                     threadAxis,
                     radialAxis,
                     preset,
@@ -322,6 +284,18 @@ namespace ThreadModeler
                     tx.Abort();
                     return false;
                 }
+
+                CreateLeadInRamp(
+                    doc,
+                    basePoint,
+                    threadAxis,
+                    radialAxis,
+                    preset,
+                    baseRadius,
+                    topRadius,
+                    leadInLength,
+                    clockwise,
+                    context.IsInteriorFace);
 
                 context.Feature.Suppressed = true;
 
@@ -342,6 +316,84 @@ namespace ThreadModeler
 
                 return false;
             }
+        }
+
+        private static void CreateLeadInRamp(
+            PartDocument doc,
+            Point basePoint,
+            UnitVector threadAxis,
+            UnitVector radialAxis,
+            PrintThreadPreset preset,
+            double baseRadius,
+            double topRadius,
+            double leadInLength,
+            bool clockwise,
+            bool isInteriorFace)
+        {
+            if (leadInLength <= 0.0)
+            {
+                DebugLog.WriteLine("Lead-in ramp skipped: invalid length.");
+                return;
+            }
+
+            double rampAngle = Math.Atan(preset.HeightCm / leadInLength);
+            rampAngle = Math.Max(0.02, rampAngle);
+            double signedTaper = isInteriorFace ? rampAngle : -rampAngle;
+
+            double radialShift = Math.Tan(rampAngle) * leadInLength;
+            double rampBaseRadius = isInteriorFace
+                ? baseRadius - radialShift
+                : baseRadius + radialShift;
+            double rampTopRadius = isInteriorFace
+                ? topRadius - radialShift
+                : topRadius + radialShift;
+
+            if (rampBaseRadius <= 0.0 || rampTopRadius <= 0.0)
+            {
+                DebugLog.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Lead-in ramp skipped: invalid start radii base={0}cm top={1}cm",
+                    rampBaseRadius,
+                    rampTopRadius));
+                return;
+            }
+
+            Point rampBasePoint = OffsetPoint(basePoint, threadAxis, -leadInLength);
+            CoilFeature rampCoil;
+            bool created = TryCreateCoilSection(
+                doc,
+                rampBasePoint,
+                threadAxis,
+                radialAxis,
+                preset,
+                rampBaseRadius,
+                rampTopRadius,
+                isInteriorFace,
+                GetEffectiveFilletRadiusCm(preset),
+                leadInLength,
+                signedTaper,
+                clockwise,
+                out rampCoil);
+
+            DebugLog.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "Lead-in ramp continuous: created={0} length={1}cm taper={2}rad startBaseRadius={3}cm startTopRadius={4}cm endBaseRadius={5}cm endTopRadius={6}cm interior={7}",
+                created,
+                leadInLength,
+                signedTaper,
+                rampBaseRadius,
+                rampTopRadius,
+                baseRadius,
+                topRadius,
+                isInteriorFace));
+        }
+
+        private static double GetLeadInLengthCm(PrintThreadContext context, PrintThreadPreset preset)
+        {
+            double minLength = Math.Max(preset.PitchCm, context.PitchCm);
+            double maxLength = Math.Max(minLength, context.UsefulLengthCm * 0.25);
+            double targetLength = Math.Max(minLength, preset.HeightCm * 2.0);
+            return Math.Min(targetLength, maxLength);
         }
 
         private static ObjectCollection DrawTrapezoidProfile(
@@ -772,19 +824,6 @@ namespace ThreadModeler
             };
 
             return true;
-        }
-
-        private static double GetLeadInTaperRadians(
-            PrintThreadPreset preset,
-            double leadInLength,
-            bool isInteriorFace)
-        {
-            double span = Math.Max(leadInLength, preset.PitchCm * 0.25);
-            double rise = Math.Max(preset.HeightCm * 0.35, preset.HeightCm * 0.15);
-            double taper = Math.Atan(rise / span);
-            taper = Math.Max(0.08, Math.Min(0.30, taper));
-
-            return isInteriorFace ? -taper : taper;
         }
 
         private static bool ValidatePreset(
