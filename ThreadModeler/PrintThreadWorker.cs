@@ -244,13 +244,17 @@ namespace ThreadModeler
                 }
 
                 double effectiveFilletRadius = GetEffectiveFilletRadiusCm(preset);
+                effectiveFilletRadius = 0.0;
+                DebugLog.WriteLine("Print fillet temporarily disabled for generation test.");
                 bool clockwise = !context.ThreadInfo.RightHanded;
                 double leadInLength = GetLeadInLengthCm(context, preset);
-                double mainHeight = Math.Max(preset.PitchCm, context.UsefulLengthCm + (2.0 * preset.PitchCm));
+                double leadOutLength = GetLeadOutLengthCm(context, preset);
+                BalanceRampLengths(context, preset, leadInLength, ref leadOutLength);
+                double mainHeight = Math.Max(preset.PitchCm, context.UsefulLengthCm - leadOutLength);
 
                 DebugLog.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
-                    "Print section params: pitch={0}cm baseWidth={1}cm topWidth={2}cm height={3}cm filletRadius={4}cm centerRadius={5}cm baseRadius={6}cm topRadius={7}cm leadInLength={8}cm mainHeight={9}cm clockwise={10} interior={11}",
+                    "Print section params: pitch={0}cm baseWidth={1}cm topWidth={2}cm height={3}cm filletRadius={4}cm centerRadius={5}cm baseRadius={6}cm topRadius={7}cm leadInLength={8}cm leadOutLength={9}cm mainHeight={10}cm clockwise={11} interior={12}",
                     preset.PitchCm,
                     preset.BaseWidthCm,
                     preset.TopWidthCm,
@@ -260,6 +264,7 @@ namespace ThreadModeler
                     baseRadius,
                     topRadius,
                     leadInLength,
+                    leadOutLength,
                     mainHeight,
                     clockwise,
                     context.IsInteriorFace));
@@ -285,7 +290,7 @@ namespace ThreadModeler
                     return false;
                 }
 
-                CreateLeadInRamp(
+                CreateLeadInChamfer(
                     doc,
                     basePoint,
                     threadAxis,
@@ -294,6 +299,19 @@ namespace ThreadModeler
                     baseRadius,
                     topRadius,
                     leadInLength,
+                    clockwise,
+                    context.IsInteriorFace);
+
+                CreateLeadOutRamp(
+                    doc,
+                    basePoint,
+                    threadAxis,
+                    radialAxis,
+                    preset,
+                    baseRadius,
+                    topRadius,
+                    context.UsefulLengthCm,
+                    leadOutLength,
                     clockwise,
                     context.IsInteriorFace);
 
@@ -318,7 +336,59 @@ namespace ThreadModeler
             }
         }
 
-        private static void CreateLeadInRamp(
+        private static double GetLeadInLengthCm(PrintThreadContext context, PrintThreadPreset preset)
+        {
+            double minLength = Math.Max(preset.PitchCm * 0.35, ThreadWorker.ThresholdPitchCm);
+            double maxLength = Math.Max(minLength, Math.Min(preset.PitchCm * 0.75, context.UsefulLengthCm * 0.20));
+            double targetLength = Math.Min(
+                Math.Max(preset.HeightCm, preset.PitchCm * 0.50),
+                preset.PitchCm * 0.75);
+
+            double length = Math.Min(Math.Max(targetLength, minLength), maxLength);
+            DebugLog.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "Lead-in length short: target={0}cm min={1}cm max={2}cm pitch={3}cm height={4}cm length={5}cm",
+                targetLength,
+                minLength,
+                maxLength,
+                preset.PitchCm,
+                preset.HeightCm,
+                length));
+
+            return length;
+        }
+
+        private static void BalanceRampLengths(
+            PrintThreadContext context,
+            PrintThreadPreset preset,
+            double leadInLength,
+            ref double leadOutLength)
+        {
+            double minMainHeight = Math.Max(preset.PitchCm, context.PitchCm);
+            double maxLeadOut = context.UsefulLengthCm - minMainHeight;
+            if (maxLeadOut <= 0.0)
+            {
+                leadOutLength = 0.0;
+                return;
+            }
+
+            if (leadOutLength <= maxLeadOut)
+            {
+                return;
+            }
+
+            leadOutLength = maxLeadOut;
+
+            DebugLog.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "Ramp lengths balanced: leadIn={0}cm leadOut={1}cm minMain={2}cm usefulLength={3}cm",
+                leadInLength,
+                leadOutLength,
+                minMainHeight,
+                context.UsefulLengthCm));
+        }
+
+        private static void CreateLeadInChamfer(
             PartDocument doc,
             Point basePoint,
             UnitVector threadAxis,
@@ -330,70 +400,291 @@ namespace ThreadModeler
             bool clockwise,
             bool isInteriorFace)
         {
-            if (leadInLength <= 0.0)
+            if (isInteriorFace)
             {
-                DebugLog.WriteLine("Lead-in ramp skipped: invalid length.");
+                DebugLog.WriteLine("Lead-in chamfer skipped for interior thread.");
                 return;
             }
 
-            double rampAngle = Math.Atan(preset.HeightCm / leadInLength);
-            rampAngle = Math.Max(0.02, rampAngle);
-            double signedTaper = isInteriorFace ? rampAngle : -rampAngle;
+            if (leadInLength <= 0.0)
+            {
+                DebugLog.WriteLine("Lead-in chamfer skipped: invalid length.");
+                return;
+            }
 
-            double radialShift = Math.Tan(rampAngle) * leadInLength;
-            double rampBaseRadius = isInteriorFace
-                ? baseRadius - radialShift
-                : baseRadius + radialShift;
-            double rampTopRadius = isInteriorFace
-                ? topRadius - radialShift
-                : topRadius + radialShift;
-
-            if (rampBaseRadius <= 0.0 || rampTopRadius <= 0.0)
+            double reducedRadius = Math.Max(baseRadius, topRadius - (preset.HeightCm * 0.65));
+            double cutOuterRadius = topRadius + Math.Max(preset.HeightCm * 0.10, 0.01);
+            if (reducedRadius >= cutOuterRadius)
             {
                 DebugLog.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
-                    "Lead-in ramp skipped: invalid start radii base={0}cm top={1}cm",
-                    rampBaseRadius,
-                    rampTopRadius));
+                    "Lead-in chamfer skipped: invalid radii reduced={0}cm outer={1}cm",
+                    reducedRadius,
+                    cutOuterRadius));
                 return;
             }
 
-            Point rampBasePoint = OffsetPoint(basePoint, threadAxis, -leadInLength);
+            try
+            {
+                WorkAxis sketchAxis = doc.ComponentDefinition.WorkAxes.AddFixed(
+                    basePoint,
+                    threadAxis,
+                    true);
+
+                WorkAxis radialWorkAxis = doc.ComponentDefinition.WorkAxes.AddFixed(
+                    basePoint,
+                    radialAxis,
+                    true);
+
+                WorkPlane sketchPlane = doc.ComponentDefinition.WorkPlanes.AddByTwoLines(
+                    sketchAxis,
+                    radialWorkAxis,
+                    true);
+
+                WorkPoint sketchOrigin = doc.ComponentDefinition.WorkPoints.AddFixed(
+                    basePoint,
+                    true);
+
+                PlanarSketch sketch = doc.ComponentDefinition.Sketches.AddWithOrientation(
+                    sketchPlane,
+                    sketchAxis,
+                    true,
+                    true,
+                    sketchOrigin,
+                    false);
+
+                Point2d p1 = _Tg.CreatePoint2d(0.0, reducedRadius);
+                Point2d p2 = _Tg.CreatePoint2d(0.0, cutOuterRadius);
+                Point2d p3 = _Tg.CreatePoint2d(leadInLength, cutOuterRadius);
+                Point2d p4 = _Tg.CreatePoint2d(leadInLength, topRadius);
+
+                SketchPoint sp1 = sketch.SketchPoints.Add(p1, false);
+                SketchPoint sp2 = sketch.SketchPoints.Add(p2, false);
+                SketchPoint sp3 = sketch.SketchPoints.Add(p3, false);
+                SketchPoint sp4 = sketch.SketchPoints.Add(p4, false);
+
+                ObjectCollection segments = _Application.TransientObjects.CreateObjectCollection();
+                segments.Add(sketch.SketchLines.AddByTwoPoints(sp1, sp2));
+                segments.Add(sketch.SketchLines.AddByTwoPoints(sp2, sp3));
+                segments.Add(sketch.SketchLines.AddByTwoPoints(sp3, sp4));
+                segments.Add(sketch.SketchLines.AddByTwoPoints(sp4, sp1));
+
+                Profile profile = sketch.Profiles.AddForSolid(false, segments, null);
+                RevolveFeature chamfer = doc.ComponentDefinition.Features.RevolveFeatures.AddFull(
+                    profile,
+                    sketchAxis,
+                    PartFeatureOperationEnum.kCutOperation);
+
+                DebugLog.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Lead-in chamfer: created={0} length={1}cm reducedRadius={2}cm topRadius={3}cm cutOuterRadius={4}cm health={5}",
+                    chamfer != null,
+                    leadInLength,
+                    reducedRadius,
+                    topRadius,
+                    cutOuterRadius,
+                    chamfer == null ? "<null>" : chamfer.HealthStatus.ToString()));
+            }
+            catch (Exception ex)
+            {
+                DebugLog.WriteException("Lead-in chamfer failed.", ex);
+            }
+        }
+
+        private static void CreateLeadOutRamp(
+            PartDocument doc,
+            Point basePoint,
+            UnitVector threadAxis,
+            UnitVector radialAxis,
+            PrintThreadPreset preset,
+            double baseRadius,
+            double topRadius,
+            double usefulLength,
+            double leadOutLength,
+            bool clockwise,
+            bool isInteriorFace)
+        {
+            if (usefulLength <= 0.0 || leadOutLength <= 0.0)
+            {
+                DebugLog.WriteLine("Lead-out ramp skipped: invalid length.");
+                return;
+            }
+
+            double rampStartDistance = Math.Max(0.0, usefulLength - leadOutLength);
+            double actualLength = usefulLength - rampStartDistance;
+            if (actualLength <= 0.0)
+            {
+                DebugLog.WriteLine("Lead-out ramp skipped: invalid bounded length.");
+                return;
+            }
+
+            double rampAngle = Math.Atan(preset.HeightCm / actualLength);
+            rampAngle = Math.Max(0.02, rampAngle);
+            double signedTaper = isInteriorFace ? -rampAngle : rampAngle;
+
+            double radialShift = Math.Tan(rampAngle) * actualLength;
+            double endBaseRadius = isInteriorFace
+                ? baseRadius - radialShift
+                : baseRadius + radialShift;
+            double endTopRadius = isInteriorFace
+                ? topRadius - radialShift
+                : topRadius + radialShift;
+
+            if (endBaseRadius <= 0.0 || endTopRadius <= 0.0)
+            {
+                DebugLog.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Lead-out ramp skipped: invalid end radii base={0}cm top={1}cm",
+                    endBaseRadius,
+                    endTopRadius));
+                return;
+            }
+
+            Point rampBasePoint = OffsetPoint(basePoint, threadAxis, rampStartDistance);
+            UnitVector rampRadialAxis = GetSectionRadialAxis(
+                radialAxis,
+                threadAxis,
+                rampStartDistance,
+                preset.PitchCm,
+                clockwise);
             CoilFeature rampCoil;
             bool created = TryCreateCoilSection(
                 doc,
                 rampBasePoint,
                 threadAxis,
-                radialAxis,
+                rampRadialAxis,
                 preset,
-                rampBaseRadius,
-                rampTopRadius,
+                baseRadius,
+                topRadius,
                 isInteriorFace,
                 GetEffectiveFilletRadiusCm(preset),
-                leadInLength,
+                actualLength,
                 signedTaper,
                 clockwise,
                 out rampCoil);
 
             DebugLog.WriteLine(string.Format(
                 CultureInfo.InvariantCulture,
-                "Lead-in ramp continuous: created={0} length={1}cm taper={2}rad startBaseRadius={3}cm startTopRadius={4}cm endBaseRadius={5}cm endTopRadius={6}cm interior={7}",
+                "Lead-out ramp bounded: created={0} startDistance={1}cm length={2}cm taper={3}rad startBaseRadius={4}cm startTopRadius={5}cm endBaseRadius={6}cm endTopRadius={7}cm usefulLength={8}cm interior={9}",
                 created,
-                leadInLength,
+                rampStartDistance,
+                actualLength,
                 signedTaper,
-                rampBaseRadius,
-                rampTopRadius,
                 baseRadius,
                 topRadius,
+                endBaseRadius,
+                endTopRadius,
+                usefulLength,
                 isInteriorFace));
         }
 
-        private static double GetLeadInLengthCm(PrintThreadContext context, PrintThreadPreset preset)
+        private static double GetLeadOutLengthCm(PrintThreadContext context, PrintThreadPreset preset)
         {
             double minLength = Math.Max(preset.PitchCm, context.PitchCm);
-            double maxLength = Math.Max(minLength, context.UsefulLengthCm * 0.25);
+            double maxLength = context.UsefulLengthCm - minLength;
+            if (maxLength <= 0.0)
+            {
+                return 0.0;
+            }
+
+            maxLength = Math.Min(maxLength, Math.Max(minLength, context.UsefulLengthCm * 0.25));
             double targetLength = Math.Max(minLength, preset.HeightCm * 2.0);
-            return Math.Min(targetLength, maxLength);
+            return GetPhaseSafeRampLengthCm(targetLength, minLength, maxLength, preset.PitchCm);
+        }
+
+        private static double GetPhaseSafeRampLengthCm(
+            double targetLength,
+            double minLength,
+            double maxLength,
+            double pitch)
+        {
+            if (pitch <= 0.0 || maxLength <= 0.0)
+            {
+                return Math.Min(targetLength, maxLength);
+            }
+
+            double minTurns = Math.Max(1.0, Math.Ceiling(minLength / pitch));
+            double targetTurns = Math.Max(minTurns, Math.Round(targetLength / pitch));
+            double maxTurns = Math.Floor(maxLength / pitch);
+
+            if (maxTurns >= minTurns)
+            {
+                double turns = Math.Min(Math.Max(targetTurns, minTurns), maxTurns);
+                double length = turns * pitch;
+                DebugLog.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Ramp length phase-safe: target={0}cm min={1}cm max={2}cm pitch={3}cm turns={4} length={5}cm",
+                    targetLength,
+                    minLength,
+                    maxLength,
+                    pitch,
+                    turns,
+                    length));
+                return length;
+            }
+
+            double fallback = Math.Min(targetLength, maxLength);
+            DebugLog.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "Ramp length phase fallback: target={0}cm min={1}cm max={2}cm pitch={3}cm length={4}cm",
+                targetLength,
+                minLength,
+                maxLength,
+                pitch,
+                fallback));
+            return fallback;
+        }
+
+        private static UnitVector GetSectionRadialAxis(
+            UnitVector radialAxis,
+            UnitVector threadAxis,
+            double distance,
+            double pitch,
+            bool clockwise)
+        {
+            if (radialAxis == null || threadAxis == null || pitch <= 0.0)
+            {
+                return radialAxis;
+            }
+
+            double angle = (2.0 * Math.PI * distance) / pitch;
+            if (clockwise)
+            {
+                angle = -angle;
+            }
+
+            double cos = Math.Cos(angle);
+            double sin = Math.Sin(angle);
+
+            double vx = radialAxis.X;
+            double vy = radialAxis.Y;
+            double vz = radialAxis.Z;
+            double ax = threadAxis.X;
+            double ay = threadAxis.Y;
+            double az = threadAxis.Z;
+
+            double dot = (ax * vx) + (ay * vy) + (az * vz);
+            double crossX = (ay * vz) - (az * vy);
+            double crossY = (az * vx) - (ax * vz);
+            double crossZ = (ax * vy) - (ay * vx);
+
+            UnitVector result = _Tg.CreateUnitVector(
+                (vx * cos) + (crossX * sin) + (ax * dot * (1.0 - cos)),
+                (vy * cos) + (crossY * sin) + (ay * dot * (1.0 - cos)),
+                (vz * cos) + (crossZ * sin) + (az * dot * (1.0 - cos)));
+
+            DebugLog.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "Section radial axis: distance={0}cm pitch={1}cm clockwise={2} angle={3}rad axis=({4},{5},{6})",
+                distance,
+                pitch,
+                clockwise,
+                angle,
+                result.X,
+                result.Y,
+                result.Z));
+
+            return result;
         }
 
         private static ObjectCollection DrawTrapezoidProfile(
@@ -401,14 +692,20 @@ namespace ThreadModeler
             PrintThreadPreset preset,
             double baseRadius,
             double topRadius,
-            bool isInteriorFace)
+            bool isInteriorFace,
+            double filletRadius)
         {
             ObjectCollection segments = _Application.TransientObjects.CreateObjectCollection();
 
             // External modeled threads are created by cutting a groove, so the sketch
             // must be the complement of the visible thread profile.
-            double cutBaseWidth = isInteriorFace ? preset.BaseWidthCm : preset.TopWidthCm;
-            double cutTopWidth = isInteriorFace ? preset.TopWidthCm : preset.BaseWidthCm;
+            double minCutWidth = Math.Min(Math.Max(preset.PitchCm * 0.02, 0.002), preset.PitchCm * 0.20);
+            double cutBaseWidth = isInteriorFace
+                ? preset.BaseWidthCm
+                : Math.Max(minCutWidth, preset.PitchCm - preset.BaseWidthCm);
+            double cutTopWidth = isInteriorFace
+                ? preset.TopWidthCm
+                : Math.Max(minCutWidth, preset.PitchCm - preset.TopWidthCm);
             double height = preset.HeightCm;
 
             double maxWidth = Math.Max(cutBaseWidth, cutTopWidth);
@@ -417,9 +714,10 @@ namespace ThreadModeler
 
             DebugLog.WriteLine(string.Format(
                 CultureInfo.InvariantCulture,
-                "Trapezoid profile: visibleBaseWidth={0}cm visibleTopWidth={1}cm cutBaseWidth={2}cm cutTopWidth={3}cm height={4}cm baseRadius={5}cm topRadius={6}cm interior={7}",
+                "Trapezoid profile: visibleBaseWidth={0}cm visibleTopWidth={1}cm pitch={2}cm cutBaseWidth={3}cm cutTopWidth={4}cm height={5}cm baseRadius={6}cm topRadius={7}cm interior={8}",
                 preset.BaseWidthCm,
                 preset.TopWidthCm,
+                preset.PitchCm,
                 cutBaseWidth,
                 cutTopWidth,
                 height,
@@ -432,7 +730,7 @@ namespace ThreadModeler
             Point2d p3 = _Tg.CreatePoint2d(topInset + cutTopWidth, topRadius);
             Point2d p4 = _Tg.CreatePoint2d(topInset, topRadius);
 
-            double requestedFilletRadius = GetEffectiveFilletRadiusCm(preset);
+            double requestedFilletRadius = filletRadius;
             double safeFilletRadius = requestedFilletRadius > 0.0
                 ? GetMaxRoundedTrapezoidRadiusCm(p1, p2, p3, p4)
                 : 0.0;
@@ -609,7 +907,8 @@ namespace ThreadModeler
                     preset,
                     baseRadius,
                     topRadius,
-                    isInteriorFace);
+                    isInteriorFace,
+                    filletRadius);
 
                 DebugLog.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
