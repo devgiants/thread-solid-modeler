@@ -225,10 +225,12 @@ namespace ThreadModeler
                 }
 
                 double centerRadius = GetReferenceRadiusCm(context);
-                double topRadius = centerRadius;
                 double baseRadius = context.IsInteriorFace
-                    ? centerRadius + preset.HeightCm
+                    ? centerRadius
                     : centerRadius - preset.HeightCm;
+                double topRadius = context.IsInteriorFace
+                    ? centerRadius - preset.HeightCm
+                    : centerRadius;
 
                 if (baseRadius <= 0.0 || topRadius <= 0.0)
                 {
@@ -238,14 +240,32 @@ namespace ThreadModeler
                 }
 
                 bool clockwise = !context.ThreadInfo.RightHanded;
-                double leadInLength = GetLeadInLengthCm(context, preset);
                 double leadOutLength = GetLeadOutLengthCm(context, preset);
-                BalanceRampLengths(context, preset, leadInLength, ref leadOutLength);
-                double mainHeight = Math.Max(preset.PitchCm, context.UsefulLengthCm - leadOutLength);
+                BalanceRampLengths(context, preset, ref leadOutLength);
+                double mainHeight = context.IsInteriorFace
+                    ? Math.Max(preset.PitchCm, context.UsefulLengthCm - GetInteriorProfileAxialWidthCm(preset))
+                    : Math.Max(preset.PitchCm, context.UsefulLengthCm - leadOutLength);
+                double startOffset = context.IsInteriorFace
+                    ? 0.0
+                    : GetExternalStartOffsetCm(preset);
+                Point coilBasePoint = startOffset <= 0.0
+                    ? basePoint
+                    : OffsetPoint(basePoint, threadAxis, -startOffset);
+                UnitVector coilRadialAxis = startOffset <= 0.0
+                    ? radialAxis
+                    : GetSectionRadialAxis(
+                        radialAxis,
+                        threadAxis,
+                        -startOffset,
+                        preset.PitchCm,
+                        clockwise);
+                double coilHeight = context.IsInteriorFace
+                    ? mainHeight
+                    : mainHeight + startOffset;
 
                 DebugLog.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
-                    "Print section params: pitch={0}cm baseWidth={1}cm topWidth={2}cm height={3}cm centerRadius={4}cm baseRadius={5}cm topRadius={6}cm leadInLength={7}cm leadOutLength={8}cm mainHeight={9}cm clockwise={10} interior={11}",
+                    "Print section params: pitch={0}cm baseWidth={1}cm topWidth={2}cm height={3}cm centerRadius={4}cm baseRadius={5}cm topRadius={6}cm leadOutLength={7}cm mainHeight={8}cm startOffset={9}cm coilHeight={10}cm clockwise={11} interior={12}",
                     preset.PitchCm,
                     preset.BaseWidthCm,
                     preset.TopWidthCm,
@@ -253,23 +273,24 @@ namespace ThreadModeler
                     centerRadius,
                     baseRadius,
                     topRadius,
-                    leadInLength,
                     leadOutLength,
                     mainHeight,
+                    startOffset,
+                    coilHeight,
                     clockwise,
                     context.IsInteriorFace));
 
                 CoilFeature coil;
                 if (!TryCreateCoilSection(
                     doc,
-                    basePoint,
+                    coilBasePoint,
                     threadAxis,
-                    radialAxis,
+                    coilRadialAxis,
                     preset,
                     baseRadius,
                     topRadius,
                     context.IsInteriorFace,
-                    mainHeight,
+                    coilHeight,
                     0.0,
                     clockwise,
                     out coil))
@@ -279,7 +300,7 @@ namespace ThreadModeler
                     return false;
                 }
 
-                CreateLeadInChamfer(
+                CreateExternalStartChamfer(
                     doc,
                     basePoint,
                     threadAxis,
@@ -287,8 +308,6 @@ namespace ThreadModeler
                     preset,
                     baseRadius,
                     topRadius,
-                    leadInLength,
-                    clockwise,
                     context.IsInteriorFace);
 
                 CreateLeadOutRamp(
@@ -325,59 +344,23 @@ namespace ThreadModeler
             }
         }
 
-        private static double GetLeadInLengthCm(PrintThreadContext context, PrintThreadPreset preset)
+        private static double GetExternalStartOffsetCm(PrintThreadPreset preset)
         {
-            double minLength = Math.Max(preset.PitchCm * 0.35, ThreadWorker.ThresholdPitchCm);
-            double maxLength = Math.Max(minLength, Math.Min(preset.PitchCm * 0.75, context.UsefulLengthCm * 0.20));
-            double targetLength = Math.Min(
-                Math.Max(preset.HeightCm, preset.PitchCm * 0.50),
-                preset.PitchCm * 0.75);
+            double offset = preset.BaseWidthCm;
+            double minOffset = ThreadWorker.ThresholdPitchCm;
+            offset = Math.Max(offset, minOffset);
 
-            double length = Math.Min(Math.Max(targetLength, minLength), maxLength);
             DebugLog.WriteLine(string.Format(
                 CultureInfo.InvariantCulture,
-                "Lead-in length short: target={0}cm min={1}cm max={2}cm pitch={3}cm height={4}cm length={5}cm",
-                targetLength,
-                minLength,
-                maxLength,
+                "External start offset: baseWidth={0}cm pitch={1}cm offset={2}cm",
+                preset.BaseWidthCm,
                 preset.PitchCm,
-                preset.HeightCm,
-                length));
+                offset));
 
-            return length;
+            return offset;
         }
 
-        private static void BalanceRampLengths(
-            PrintThreadContext context,
-            PrintThreadPreset preset,
-            double leadInLength,
-            ref double leadOutLength)
-        {
-            double minMainHeight = Math.Max(preset.PitchCm, context.PitchCm);
-            double maxLeadOut = context.UsefulLengthCm - minMainHeight;
-            if (maxLeadOut <= 0.0)
-            {
-                leadOutLength = 0.0;
-                return;
-            }
-
-            if (leadOutLength <= maxLeadOut)
-            {
-                return;
-            }
-
-            leadOutLength = maxLeadOut;
-
-            DebugLog.WriteLine(string.Format(
-                CultureInfo.InvariantCulture,
-                "Ramp lengths balanced: leadIn={0}cm leadOut={1}cm minMain={2}cm usefulLength={3}cm",
-                leadInLength,
-                leadOutLength,
-                minMainHeight,
-                context.UsefulLengthCm));
-        }
-
-        private static void CreateLeadInChamfer(
+        private static void CreateExternalStartChamfer(
             PartDocument doc,
             Point basePoint,
             UnitVector threadAxis,
@@ -385,29 +368,22 @@ namespace ThreadModeler
             PrintThreadPreset preset,
             double baseRadius,
             double topRadius,
-            double leadInLength,
-            bool clockwise,
             bool isInteriorFace)
         {
             if (isInteriorFace)
             {
-                DebugLog.WriteLine("Lead-in chamfer skipped for interior thread.");
                 return;
             }
 
-            if (leadInLength <= 0.0)
-            {
-                DebugLog.WriteLine("Lead-in chamfer skipped: invalid length.");
-                return;
-            }
-
-            double reducedRadius = Math.Max(baseRadius, topRadius - (preset.HeightCm * 0.65));
+            double chamferLength = Math.Min(preset.BaseWidthCm * 0.5, preset.PitchCm * 0.25);
+            double reducedRadius = Math.Max(baseRadius, topRadius - (preset.HeightCm * 0.45));
             double cutOuterRadius = topRadius + Math.Max(preset.HeightCm * 0.10, 0.01);
-            if (reducedRadius >= cutOuterRadius)
+            if (chamferLength <= 0.0 || reducedRadius >= cutOuterRadius)
             {
                 DebugLog.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
-                    "Lead-in chamfer skipped: invalid radii reduced={0}cm outer={1}cm",
+                    "External start chamfer skipped: length={0}cm reducedRadius={1}cm outerRadius={2}cm",
+                    chamferLength,
                     reducedRadius,
                     cutOuterRadius));
                 return;
@@ -444,8 +420,8 @@ namespace ThreadModeler
 
                 Point2d p1 = _Tg.CreatePoint2d(0.0, reducedRadius);
                 Point2d p2 = _Tg.CreatePoint2d(0.0, cutOuterRadius);
-                Point2d p3 = _Tg.CreatePoint2d(leadInLength, cutOuterRadius);
-                Point2d p4 = _Tg.CreatePoint2d(leadInLength, topRadius);
+                Point2d p3 = _Tg.CreatePoint2d(chamferLength, cutOuterRadius);
+                Point2d p4 = _Tg.CreatePoint2d(chamferLength, topRadius);
 
                 SketchPoint sp1 = sketch.SketchPoints.Add(p1, false);
                 SketchPoint sp2 = sketch.SketchPoints.Add(p2, false);
@@ -466,9 +442,9 @@ namespace ThreadModeler
 
                 DebugLog.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
-                    "Lead-in chamfer: created={0} length={1}cm reducedRadius={2}cm topRadius={3}cm cutOuterRadius={4}cm health={5}",
+                    "External start chamfer: created={0} length={1}cm reducedRadius={2}cm topRadius={3}cm cutOuterRadius={4}cm health={5}",
                     chamfer != null,
-                    leadInLength,
+                    chamferLength,
                     reducedRadius,
                     topRadius,
                     cutOuterRadius,
@@ -476,8 +452,36 @@ namespace ThreadModeler
             }
             catch (Exception ex)
             {
-                DebugLog.WriteException("Lead-in chamfer failed.", ex);
+                DebugLog.WriteException("External start chamfer failed.", ex);
             }
+        }
+
+        private static void BalanceRampLengths(
+            PrintThreadContext context,
+            PrintThreadPreset preset,
+            ref double leadOutLength)
+        {
+            double minMainHeight = Math.Max(preset.PitchCm, context.PitchCm);
+            double maxLeadOut = context.UsefulLengthCm - minMainHeight;
+            if (maxLeadOut <= 0.0)
+            {
+                leadOutLength = 0.0;
+                return;
+            }
+
+            if (leadOutLength <= maxLeadOut)
+            {
+                return;
+            }
+
+            leadOutLength = maxLeadOut;
+
+            DebugLog.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "Ramp lengths balanced: leadOut={0}cm minMain={1}cm usefulLength={2}cm",
+                leadOutLength,
+                minMainHeight,
+                context.UsefulLengthCm));
         }
 
         private static void CreateLeadOutRamp(
@@ -493,6 +497,12 @@ namespace ThreadModeler
             bool clockwise,
             bool isInteriorFace)
         {
+            if (isInteriorFace)
+            {
+                DebugLog.WriteLine("Interior lead-out ramp skipped: additive interior thread uses the full clean profile.");
+                return;
+            }
+
             if (usefulLength <= 0.0 || leadOutLength <= 0.0)
             {
                 DebugLog.WriteLine("Lead-out ramp skipped: invalid length.");
@@ -566,6 +576,116 @@ namespace ThreadModeler
                 isInteriorFace));
         }
 
+        private static void CreateInteriorLeadOutChamfer(
+            PartDocument doc,
+            Point basePoint,
+            UnitVector threadAxis,
+            UnitVector radialAxis,
+            PrintThreadPreset preset,
+            double baseRadius,
+            double topRadius,
+            double usefulLength,
+            double leadOutLength)
+        {
+            if (usefulLength <= 0.0 || leadOutLength <= 0.0)
+            {
+                DebugLog.WriteLine("Interior lead-out chamfer skipped: invalid length.");
+                return;
+            }
+
+            if (topRadius <= 0.0 || baseRadius <= topRadius)
+            {
+                DebugLog.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Interior lead-out chamfer skipped: invalid radii base={0}cm top={1}cm",
+                    baseRadius,
+                    topRadius));
+                return;
+            }
+
+            double startDistance = Math.Max(0.0, usefulLength - leadOutLength);
+            double actualLength = usefulLength - startDistance;
+            if (actualLength <= 0.0)
+            {
+                DebugLog.WriteLine("Interior lead-out chamfer skipped: invalid bounded length.");
+                return;
+            }
+
+            try
+            {
+                WorkAxis sketchAxis = doc.ComponentDefinition.WorkAxes.AddFixed(
+                    basePoint,
+                    threadAxis,
+                    true);
+
+                WorkAxis radialWorkAxis = doc.ComponentDefinition.WorkAxes.AddFixed(
+                    basePoint,
+                    radialAxis,
+                    true);
+
+                WorkPlane sketchPlane = doc.ComponentDefinition.WorkPlanes.AddByTwoLines(
+                    sketchAxis,
+                    radialWorkAxis,
+                    true);
+
+                WorkPoint sketchOrigin = doc.ComponentDefinition.WorkPoints.AddFixed(
+                    basePoint,
+                    true);
+
+                PlanarSketch sketch = doc.ComponentDefinition.Sketches.AddWithOrientation(
+                    sketchPlane,
+                    sketchAxis,
+                    true,
+                    true,
+                    sketchOrigin,
+                    false);
+
+                double innerRadius = topRadius - Math.Max(preset.HeightCm * 0.05, 0.002);
+                if (innerRadius <= 0.0)
+                {
+                    DebugLog.WriteLine(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "Interior lead-out chamfer skipped: invalid inner radius inner={0}cm",
+                        innerRadius));
+                    return;
+                }
+
+                Point2d p1 = _Tg.CreatePoint2d(startDistance, baseRadius);
+                Point2d p2 = _Tg.CreatePoint2d(usefulLength, innerRadius);
+                Point2d p3 = _Tg.CreatePoint2d(usefulLength, baseRadius);
+
+                SketchPoint sp1 = sketch.SketchPoints.Add(p1, false);
+                SketchPoint sp2 = sketch.SketchPoints.Add(p2, false);
+                SketchPoint sp3 = sketch.SketchPoints.Add(p3, false);
+
+                ObjectCollection segments = _Application.TransientObjects.CreateObjectCollection();
+                segments.Add(sketch.SketchLines.AddByTwoPoints(sp1, sp2));
+                segments.Add(sketch.SketchLines.AddByTwoPoints(sp2, sp3));
+                segments.Add(sketch.SketchLines.AddByTwoPoints(sp3, sp1));
+
+                Profile profile = sketch.Profiles.AddForSolid(false, segments, null);
+                RevolveFeature chamfer = doc.ComponentDefinition.Features.RevolveFeatures.AddFull(
+                    profile,
+                    sketchAxis,
+                    PartFeatureOperationEnum.kCutOperation);
+
+                DebugLog.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Interior lead-out chamfer: created={0} startDistance={1}cm length={2}cm baseRadius={3}cm innerRadius={4}cm usefulLength={5}cm health={6}",
+                    chamfer != null,
+                    startDistance,
+                    actualLength,
+                    baseRadius,
+                    innerRadius,
+                    usefulLength,
+                    chamfer == null ? "<null>" : chamfer.HealthStatus.ToString()));
+            }
+            catch (Exception ex)
+            {
+                DebugLog.WriteException("Interior lead-out chamfer failed.", ex);
+            }
+        }
+
         private static double GetLeadOutLengthCm(PrintThreadContext context, PrintThreadPreset preset)
         {
             double minLength = Math.Max(preset.PitchCm, context.PitchCm);
@@ -621,6 +741,14 @@ namespace ThreadModeler
                 pitch,
                 fallback));
             return fallback;
+        }
+
+        private static double GetInteriorProfileAxialWidthCm(PrintThreadPreset preset)
+        {
+            double minWidth = Math.Min(Math.Max(preset.PitchCm * 0.02, 0.002), preset.PitchCm * 0.20);
+            double baseWidth = Math.Max(minWidth, preset.PitchCm - preset.TopWidthCm);
+            double topWidth = Math.Max(minWidth, preset.PitchCm - preset.BaseWidthCm);
+            return Math.Max(baseWidth, topWidth);
         }
 
         private static UnitVector GetSectionRadialAxis(
@@ -688,10 +816,10 @@ namespace ThreadModeler
             // must be the complement of the visible thread profile.
             double minCutWidth = Math.Min(Math.Max(preset.PitchCm * 0.02, 0.002), preset.PitchCm * 0.20);
             double cutBaseWidth = isInteriorFace
-                ? preset.BaseWidthCm
+                ? Math.Max(minCutWidth, preset.PitchCm - preset.TopWidthCm)
                 : Math.Max(minCutWidth, preset.PitchCm - preset.BaseWidthCm);
             double cutTopWidth = isInteriorFace
-                ? preset.TopWidthCm
+                ? Math.Max(minCutWidth, preset.PitchCm - preset.BaseWidthCm)
                 : Math.Max(minCutWidth, preset.PitchCm - preset.TopWidthCm);
             double height = preset.HeightCm;
 
@@ -827,7 +955,9 @@ namespace ThreadModeler
                     sketchAxis,
                     preset.PitchCm,
                     coilHeight,
-                    PartFeatureOperationEnum.kCutOperation,
+                    isInteriorFace
+                        ? PartFeatureOperationEnum.kJoinOperation
+                        : PartFeatureOperationEnum.kCutOperation,
                     false,
                     clockwise,
                     taper,
@@ -898,6 +1028,16 @@ namespace ThreadModeler
             {
                 errorMessage = "Pitch is too small compared to the profile width.";
                 return false;
+            }
+
+            if (context != null && context.IsInteriorFace)
+            {
+                double interiorMainHeight = context.UsefulLengthCm - GetInteriorProfileAxialWidthCm(preset);
+                if (interiorMainHeight < preset.PitchCm)
+                {
+                    errorMessage = "Selected internal thread is too short for this profile.";
+                    return false;
+                }
             }
 
             return true;

@@ -543,10 +543,23 @@ namespace ThreadModeler.Commands
             SetFieldState(tbHeight, heightValid);
             SetFieldState(tbPitch, pitchValid);
 
+            bool lengthValid = true;
+            if (_Context != null && _Context.IsInteriorFace &&
+                baseValid && topValid && pitchValid &&
+                baseWidth > 0.0 && topWidth > 0.0 && pitch > 0.0)
+            {
+                double minWidth = Math.Min(Math.Max(pitch * 0.02, 0.002), pitch * 0.20);
+                double baseWidthComplement = Math.Max(minWidth, pitch - topWidth);
+                double topWidthComplement = Math.Max(minWidth, pitch - baseWidth);
+                double axialWidth = Math.Max(baseWidthComplement, topWidthComplement);
+                lengthValid = _Context.UsefulLengthCm - axialWidth >= pitch;
+            }
+
             _FieldsValid = baseValid && topValid && heightValid && pitchValid &&
                 baseWidth > 0.0 && topWidth > 0.0 && height > 0.0 && pitch > 0.0 &&
                 topWidth < baseWidth &&
                 pitch >= baseWidth * 0.75 &&
+                lengthValid &&
                 _Context != null;
         }
 
