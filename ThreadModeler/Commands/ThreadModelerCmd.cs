@@ -42,7 +42,7 @@ namespace ThreadModeler.Commands
         {
             get
             {
-                return "ThreadSolidModeler";
+                return "Standard solid thread";
             }
         }
 
@@ -75,7 +75,7 @@ namespace ThreadModeler.Commands
         {
             get
             {
-                return "Displays ThreadSolidModeler main control";
+                return "Generates a standard solid thread";
             }
         }
 
@@ -83,7 +83,7 @@ namespace ThreadModeler.Commands
         {
             get
             {
-                return "Displays ThreadSolidModeler main control";
+                return "Generate a standard solid thread from selected Inventor ThreadFeatures";
             }
         }
 
@@ -99,7 +99,7 @@ namespace ThreadModeler.Commands
         {
             get
             {
-                return "ThreadModeler.resources.threadModeler.ico";
+                return "ThreadModeler.resources.standardSolidThread.ico";
             }
         }
 
@@ -107,7 +107,7 @@ namespace ThreadModeler.Commands
         {
             get
             {
-                return "ThreadModeler.resources.threadModeler.ico";
+                return "ThreadModeler.resources.standardSolidThread.ico";
             }
         }
 

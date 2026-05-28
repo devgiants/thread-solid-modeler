@@ -18,7 +18,7 @@ namespace ThreadModeler.Commands
 
         public override string DisplayName
         {
-            get { return "ThreadSolidModeler 3D Print"; }
+            get { return "3D print custom thread"; }
         }
 
         public override string InternalName
@@ -42,12 +42,12 @@ namespace ThreadModeler.Commands
 
         public override string Description
         {
-            get { return "Displays the ThreadSolidModeler 3D Print control"; }
+            get { return "Generates a custom thread for 3D printing"; }
         }
 
         public override string ToolTipText
         {
-            get { return "Displays the ThreadSolidModeler 3D Print control"; }
+            get { return "Generate a custom trapezoidal thread for 3D printing"; }
         }
 
         public override ButtonDisplayEnum ButtonDisplay
@@ -57,12 +57,12 @@ namespace ThreadModeler.Commands
 
         public override string StandardIconName
         {
-            get { return "ThreadModeler.resources.threadModeler.ico"; }
+            get { return "ThreadModeler.resources.printCustomThread.ico"; }
         }
 
         public override string LargeIconName
         {
-            get { return "ThreadModeler.resources.threadModeler.ico"; }
+            get { return "ThreadModeler.resources.printCustomThread.ico"; }
         }
 
         protected override void OnExecute(NameValueMap context)

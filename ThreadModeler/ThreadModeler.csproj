@@ -132,6 +132,8 @@
     </EmbeddedResource>
     <EmbeddedResource Include="resources\Help.ico" />
     <EmbeddedResource Include="resources\about.ico" />
+    <EmbeddedResource Include="resources\standardSolidThread.ico" />
+    <EmbeddedResource Include="resources\printCustomThread.ico" />
     <EmbeddedResource Include="resources\threadModeler.ico" />
     <Content Include="Thread Templates\BSW Template.ipt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

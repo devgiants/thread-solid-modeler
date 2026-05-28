@@ -10,17 +10,17 @@ ThreadSolidModeler is an Autodesk Inventor add-in that converts existing thread 
 
 It works on selected thread features in a Part document, opens a modeless dialog, and generates the modeled result from the Inventor thread metadata.
 
-The ribbon exposes two Part commands side by side:
+The Thread Solid Modeler ribbon exposes two Part commands side by side:
 
-- `ThreadSolidModeler` for the ISO workflow.
-- `ThreadSolidModeler 3D Print` for the dedicated print workflow.
+- `Standard solid thread` for the ISO workflow.
+- `3D print custom thread` for the dedicated print workflow.
 
 The current default template is ISO Template.ipt. BSW Template.ipt is also shipped in the bundle and can be selected manually.
 
 Usage
 -----
 1. Select one or more thread features in a Part document.
-2. Launch `ThreadSolidModeler` from the Inventor ribbon for the ISO workflow, or `ThreadSolidModeler 3D Print` for the print workflow.
+2. Launch `Standard solid thread` from the Inventor ribbon for the ISO workflow, or `3D print custom thread` for the print workflow.
 3. The ISO dialog lets you choose the template and pitch offset.
 4. The 3D Print dialog pre-fills a trapezoidal profile from the selected thread's nominal diameter and lets you override the values manually.
 5. Confirm to generate the modeled thread.

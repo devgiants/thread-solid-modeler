@@ -21,7 +21,6 @@ namespace ThreadModeler
         public double TopWidthCm { get; set; }
         public double HeightCm { get; set; }
         public double PitchCm { get; set; }
-        public double FilletRadiusCm { get; set; }
     }
 
     internal sealed class PrintThreadContext
@@ -171,16 +170,12 @@ namespace ThreadModeler
             double baseWidthMm = pitchMm * 0.70;
             double topWidthMm = pitchMm * 0.35;
             double heightMm = pitchMm * 0.50;
-            double filletRadiusMm = Math.Min(
-                pitchMm * 0.10,
-                Math.Min(heightMm, topWidthMm) * 0.20);
 
             // Keep the profile conservative and inside the available diameter envelope.
             double maxProfileWidthMm = Math.Max(0.0, nominalDiameterMm * 0.85);
             baseWidthMm = Clamp(baseWidthMm, pitchMm * 0.25, maxProfileWidthMm);
             topWidthMm = Clamp(topWidthMm, pitchMm * 0.15, baseWidthMm * 0.90);
             heightMm = Clamp(heightMm, pitchMm * 0.20, Math.Max(0.1, nominalDiameterMm * 0.20));
-            filletRadiusMm = Clamp(filletRadiusMm, 0.0, Math.Min(Math.Min(baseWidthMm, topWidthMm), heightMm) * 0.20);
 
             return new PrintThreadPreset
             {
@@ -188,8 +183,7 @@ namespace ThreadModeler
                 BaseWidthCm = baseWidthMm * 0.1,
                 TopWidthCm = topWidthMm * 0.1,
                 HeightCm = heightMm * 0.1,
-                PitchCm = pitchMm * 0.1,
-                FilletRadiusCm = filletRadiusMm * 0.1
+                PitchCm = pitchMm * 0.1
             };
         }
 
@@ -243,9 +237,6 @@ namespace ThreadModeler
                     return false;
                 }
 
-                double effectiveFilletRadius = GetEffectiveFilletRadiusCm(preset);
-                effectiveFilletRadius = 0.0;
-                DebugLog.WriteLine("Print fillet temporarily disabled for generation test.");
                 bool clockwise = !context.ThreadInfo.RightHanded;
                 double leadInLength = GetLeadInLengthCm(context, preset);
                 double leadOutLength = GetLeadOutLengthCm(context, preset);
@@ -254,12 +245,11 @@ namespace ThreadModeler
 
                 DebugLog.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
-                    "Print section params: pitch={0}cm baseWidth={1}cm topWidth={2}cm height={3}cm filletRadius={4}cm centerRadius={5}cm baseRadius={6}cm topRadius={7}cm leadInLength={8}cm leadOutLength={9}cm mainHeight={10}cm clockwise={11} interior={12}",
+                    "Print section params: pitch={0}cm baseWidth={1}cm topWidth={2}cm height={3}cm centerRadius={4}cm baseRadius={5}cm topRadius={6}cm leadInLength={7}cm leadOutLength={8}cm mainHeight={9}cm clockwise={10} interior={11}",
                     preset.PitchCm,
                     preset.BaseWidthCm,
                     preset.TopWidthCm,
                     preset.HeightCm,
-                    preset.FilletRadiusCm,
                     centerRadius,
                     baseRadius,
                     topRadius,
@@ -279,7 +269,6 @@ namespace ThreadModeler
                     baseRadius,
                     topRadius,
                     context.IsInteriorFace,
-                    effectiveFilletRadius,
                     mainHeight,
                     0.0,
                     clockwise,
@@ -557,7 +546,6 @@ namespace ThreadModeler
                 baseRadius,
                 topRadius,
                 isInteriorFace,
-                GetEffectiveFilletRadiusCm(preset),
                 actualLength,
                 signedTaper,
                 clockwise,
@@ -692,8 +680,7 @@ namespace ThreadModeler
             PrintThreadPreset preset,
             double baseRadius,
             double topRadius,
-            bool isInteriorFace,
-            double filletRadius)
+            bool isInteriorFace)
         {
             ObjectCollection segments = _Application.TransientObjects.CreateObjectCollection();
 
@@ -730,58 +717,7 @@ namespace ThreadModeler
             Point2d p3 = _Tg.CreatePoint2d(topInset + cutTopWidth, topRadius);
             Point2d p4 = _Tg.CreatePoint2d(topInset, topRadius);
 
-            double requestedFilletRadius = filletRadius;
-            double safeFilletRadius = requestedFilletRadius > 0.0
-                ? GetMaxRoundedTrapezoidRadiusCm(p1, p2, p3, p4)
-                : 0.0;
-
-            if (requestedFilletRadius > 0.0)
-            {
-                DebugLog.WriteLine(string.Format(
-                    CultureInfo.InvariantCulture,
-                    "Trapezoid fillet request: requested={0}cm safeMax={1}cm",
-                    requestedFilletRadius,
-                    safeFilletRadius));
-            }
-
-            if (requestedFilletRadius > 0.0 && safeFilletRadius > 0.0 && requestedFilletRadius <= safeFilletRadius)
-            {
-                if (TryCreateRoundedCrestProfile(
-                    sketch,
-                    p1,
-                    p2,
-                    p3,
-                    p4,
-                    requestedFilletRadius,
-                    segments))
-                {
-                    DebugLog.WriteLine(string.Format(
-                        CultureInfo.InvariantCulture,
-                        "Rounded crest trapezoid profile created: radius={0}cm",
-                        requestedFilletRadius));
-                }
-                else
-                {
-                    DebugLog.WriteLine(string.Format(
-                        CultureInfo.InvariantCulture,
-                        "Rounded crest trapezoid disabled after geometry build failure: requested={0}cm",
-                        requestedFilletRadius));
-                    BuildSharpTrapezoidProfile(sketch, p1, p2, p3, p4, segments);
-                }
-            }
-            else
-            {
-                if (requestedFilletRadius > 0.0)
-                {
-                    DebugLog.WriteLine(string.Format(
-                        CultureInfo.InvariantCulture,
-                        "Trapezoid fillet suppressed: requested={0}cm safeMax={1}cm",
-                        requestedFilletRadius,
-                        safeFilletRadius));
-                }
-
-                BuildSharpTrapezoidProfile(sketch, p1, p2, p3, p4, segments);
-            }
+            BuildSharpTrapezoidProfile(sketch, p1, p2, p3, p4, segments);
 
             DebugLog.WriteLine(string.Format(
                 CultureInfo.InvariantCulture,
@@ -818,44 +754,6 @@ namespace ThreadModeler
             segments.Add(sketch.SketchLines.AddByTwoPoints(sp4, sp1));
         }
 
-        private static bool TryCreateRoundedCrestProfile(
-            PlanarSketch sketch,
-            Point2d p1,
-            Point2d p2,
-            Point2d p3,
-            Point2d p4,
-            double filletRadius,
-            ObjectCollection segments)
-        {
-            RoundedCorner crestRight;
-            RoundedCorner crestLeft;
-
-            if (!TryBuildRoundedCorner(p2, p3, p4, filletRadius, out crestRight) ||
-                !TryBuildRoundedCorner(p3, p4, p1, filletRadius, out crestLeft))
-            {
-                return false;
-            }
-
-            SketchPoint sp1 = sketch.SketchPoints.Add(p1, false);
-            SketchPoint sp2 = sketch.SketchPoints.Add(p2, false);
-            SketchPoint sp3 = sketch.SketchPoints.Add(p3, false);
-            SketchPoint sp4 = sketch.SketchPoints.Add(p4, false);
-
-            SketchPoint crestRightIn = sketch.SketchPoints.Add(crestRight.InPoint, false);
-            SketchPoint crestRightOut = sketch.SketchPoints.Add(crestRight.OutPoint, false);
-            SketchPoint crestLeftIn = sketch.SketchPoints.Add(crestLeft.InPoint, false);
-            SketchPoint crestLeftOut = sketch.SketchPoints.Add(crestLeft.OutPoint, false);
-
-            segments.Add(sketch.SketchLines.AddByTwoPoints(sp1, sp2));
-            segments.Add(sketch.SketchLines.AddByTwoPoints(sp2, crestRightIn));
-            segments.Add(sketch.SketchArcs.AddByThreePoints(crestRightIn, crestRight.MidPoint, crestRightOut));
-            segments.Add(sketch.SketchLines.AddByTwoPoints(crestRightOut, crestLeftIn));
-            segments.Add(sketch.SketchArcs.AddByThreePoints(crestLeftIn, crestLeft.MidPoint, crestLeftOut));
-            segments.Add(sketch.SketchLines.AddByTwoPoints(crestLeftOut, sp1));
-
-            return true;
-        }
-
         private static bool TryCreateCoilSection(
             PartDocument doc,
             Point basePoint,
@@ -865,7 +763,6 @@ namespace ThreadModeler
             double baseRadius,
             double topRadius,
             bool isInteriorFace,
-            double filletRadius,
             double coilHeight,
             double taper,
             bool clockwise,
@@ -907,18 +804,16 @@ namespace ThreadModeler
                     preset,
                     baseRadius,
                     topRadius,
-                    isInteriorFace,
-                    filletRadius);
+                    isInteriorFace);
 
                 DebugLog.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
-                    "TryCreateCoilSection: basePoint=({0},{1},{2}) coilHeight={3} taper={4} filletRadius={5} clockwise={6} baseRadius={7} topRadius={8} interior={9} profileSegments={10}",
+                    "TryCreateCoilSection: basePoint=({0},{1},{2}) coilHeight={3} taper={4} clockwise={5} baseRadius={6} topRadius={7} interior={8} profileSegments={9}",
                     basePoint.X,
                     basePoint.Y,
                     basePoint.Z,
                     coilHeight,
                     taper,
-                    filletRadius,
                     clockwise,
                     baseRadius,
                     topRadius,
@@ -962,167 +857,6 @@ namespace ThreadModeler
                 basePoint.X + direction.X * distance,
                 basePoint.Y + direction.Y * distance,
                 basePoint.Z + direction.Z * distance);
-        }
-
-        private static double GetEffectiveFilletRadiusCm(PrintThreadPreset preset)
-        {
-            if (preset == null || preset.FilletRadiusCm <= 0.0)
-            {
-                return 0.0;
-            }
-
-            double minDimension = Math.Min(
-                Math.Min(preset.BaseWidthCm, preset.TopWidthCm),
-                preset.HeightCm);
-
-            double safeRadius = minDimension * 0.20;
-            if (safeRadius <= 0.0 || preset.FilletRadiusCm > safeRadius)
-            {
-                DebugLog.WriteLine(string.Format(
-                    CultureInfo.InvariantCulture,
-                    "Trapezoid fillet suppressed: requested={0}cm safeMax={1}cm minDimension={2}cm",
-                    preset.FilletRadiusCm,
-                    safeRadius,
-                    minDimension));
-                return 0.0;
-            }
-
-            return preset.FilletRadiusCm;
-        }
-
-        private static double GetMaxRoundedTrapezoidRadiusCm(
-            Point2d p1,
-            Point2d p2,
-            Point2d p3,
-            Point2d p4)
-        {
-            double crestRightRadius = GetCornerMaxRadiusCm(p2, p3, p4);
-            double crestLeftRadius = GetCornerMaxRadiusCm(p3, p4, p1);
-
-            return Math.Min(crestRightRadius, crestLeftRadius);
-        }
-
-        private static double GetCornerMaxRadiusCm(
-            Point2d prev,
-            Point2d corner,
-            Point2d next)
-        {
-            double prevDx = prev.X - corner.X;
-            double prevDy = prev.Y - corner.Y;
-            double nextDx = next.X - corner.X;
-            double nextDy = next.Y - corner.Y;
-
-            double prevLength = Math.Sqrt((prevDx * prevDx) + (prevDy * prevDy));
-            double nextLength = Math.Sqrt((nextDx * nextDx) + (nextDy * nextDy));
-            if (prevLength <= 0.0 || nextLength <= 0.0)
-            {
-                return 0.0;
-            }
-
-            double prevUx = prevDx / prevLength;
-            double prevUy = prevDy / prevLength;
-            double nextUx = nextDx / nextLength;
-            double nextUy = nextDy / nextLength;
-
-            double dot = (prevUx * nextUx) + (prevUy * nextUy);
-            dot = Math.Max(-1.0, Math.Min(1.0, dot));
-
-            double angle = Math.Acos(dot);
-            if (angle <= 0.0 || angle >= Math.PI)
-            {
-                return 0.0;
-            }
-
-            double tangentDistance = Math.Min(prevLength, nextLength) * 0.45;
-            double maxRadius = tangentDistance / Math.Tan(angle * 0.5);
-            return Math.Max(0.0, maxRadius);
-        }
-
-        private sealed class RoundedCorner
-        {
-            public Point2d InPoint { get; set; }
-            public Point2d OutPoint { get; set; }
-            public Point2d MidPoint { get; set; }
-        }
-
-        private static bool TryBuildRoundedCorner(
-            Point2d prev,
-            Point2d corner,
-            Point2d next,
-            double radius,
-            out RoundedCorner result)
-        {
-            result = null;
-
-            double prevDx = prev.X - corner.X;
-            double prevDy = prev.Y - corner.Y;
-            double nextDx = next.X - corner.X;
-            double nextDy = next.Y - corner.Y;
-
-            double prevLength = Math.Sqrt((prevDx * prevDx) + (prevDy * prevDy));
-            double nextLength = Math.Sqrt((nextDx * nextDx) + (nextDy * nextDy));
-            if (prevLength <= 0.0 || nextLength <= 0.0)
-            {
-                return false;
-            }
-
-            double prevUx = prevDx / prevLength;
-            double prevUy = prevDy / prevLength;
-            double nextUx = nextDx / nextLength;
-            double nextUy = nextDy / nextLength;
-
-            double dot = (prevUx * nextUx) + (prevUy * nextUy);
-            dot = Math.Max(-1.0, Math.Min(1.0, dot));
-
-            double angle = Math.Acos(dot);
-            if (angle <= 0.0 || angle >= Math.PI)
-            {
-                return false;
-            }
-
-            double tangentDistance = radius * Math.Tan(angle * 0.5);
-            if (tangentDistance <= 0.0 ||
-                tangentDistance >= prevLength ||
-                tangentDistance >= nextLength)
-            {
-                return false;
-            }
-
-            double bisectorX = prevUx + nextUx;
-            double bisectorY = prevUy + nextUy;
-            double bisectorLength = Math.Sqrt((bisectorX * bisectorX) + (bisectorY * bisectorY));
-            if (bisectorLength <= 0.0)
-            {
-                return false;
-            }
-
-            double centerDistance = radius / Math.Sin(angle * 0.5);
-            double centerX = corner.X + ((bisectorX / bisectorLength) * centerDistance);
-            double centerY = corner.Y + ((bisectorY / bisectorLength) * centerDistance);
-
-            double cornerVectorX = corner.X - centerX;
-            double cornerVectorY = corner.Y - centerY;
-            double cornerVectorLength = Math.Sqrt((cornerVectorX * cornerVectorX) + (cornerVectorY * cornerVectorY));
-            if (cornerVectorLength <= 0.0)
-            {
-                return false;
-            }
-
-            double midX = centerX + ((cornerVectorX / cornerVectorLength) * radius);
-            double midY = centerY + ((cornerVectorY / cornerVectorLength) * radius);
-
-            result = new RoundedCorner
-            {
-                InPoint = _Tg.CreatePoint2d(
-                    corner.X + (prevUx * tangentDistance),
-                    corner.Y + (prevUy * tangentDistance)),
-                OutPoint = _Tg.CreatePoint2d(
-                    corner.X + (nextUx * tangentDistance),
-                    corner.Y + (nextUy * tangentDistance)),
-                MidPoint = _Tg.CreatePoint2d(midX, midY)
-            };
-
-            return true;
         }
 
         private static bool ValidatePreset(

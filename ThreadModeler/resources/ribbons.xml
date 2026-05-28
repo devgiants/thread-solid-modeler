@@ -20,12 +20,12 @@
 <Ribbon>
 <RibbonTab ribbons="Part"
            internalName="id_TabThreadSolidModeler" 
-           displayName="ThreadSolidModeler" 
+           displayName="Thread Solid Modeler" 
            targetTab="" 
            insertBefore="false">
   
     <RibbonPanel internalName="ThreadSolidModeler.PanelPart" 
-                 displayName="threadSolidModeler"
+                 displayName="Thread Solid Modeler"
                  targetPanel="" 
                  insertBefore="false">
 

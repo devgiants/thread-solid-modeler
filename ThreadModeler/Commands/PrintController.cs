@@ -34,7 +34,6 @@ namespace ThreadModeler.Commands
         private readonly TextBox tbTopWidth;
         private readonly TextBox tbHeight;
         private readonly TextBox tbPitch;
-        private readonly TextBox tbFilletRadius;
         private readonly Button bApplyPreset;
         private readonly Button bGenerate;
         private readonly Button bCancel;
@@ -47,7 +46,7 @@ namespace ThreadModeler.Commands
             _InteractionManager = InteractionManager;
             _Document = _Application.ActiveEditDocument as PartDocument;
 
-            Text = "ThreadSolidModeler 3D Print";
+            Text = "3D print custom thread";
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -70,7 +69,6 @@ namespace ThreadModeler.Commands
             tbTopWidth = CreateEditableBox();
             tbHeight = CreateEditableBox();
             tbPitch = CreateEditableBox();
-            tbFilletRadius = CreateEditableBox();
             bApplyPreset = new Button();
             bGenerate = new Button();
             bCancel = new Button();
@@ -81,7 +79,6 @@ namespace ThreadModeler.Commands
             tbTopWidth.TextChanged += NumericField_TextChanged;
             tbHeight.TextChanged += NumericField_TextChanged;
             tbPitch.TextChanged += NumericField_TextChanged;
-            tbFilletRadius.TextChanged += NumericField_TextChanged;
             bApplyPreset.Click += bApplyPreset_Click;
             bGenerate.Click += bGenerate_Click;
             bCancel.Click += bCancel_Click;
@@ -138,12 +135,12 @@ namespace ThreadModeler.Commands
             AddRow(selectionGrid, 4, "Face type", tbFaceType);
 
             GroupBox gbPreset = new GroupBox();
-            gbPreset.Text = "3D Print preset";
+            gbPreset.Text = "3D print custom thread preset";
             gbPreset.Dock = DockStyle.Fill;
             gbPreset.Padding = new Padding(12, 18, 12, 12);
             root.Controls.Add(gbPreset, 0, 2);
 
-            TableLayoutPanel presetGrid = CreateGrid(3, 6);
+            TableLayoutPanel presetGrid = CreateGrid(3, 5);
             gbPreset.Controls.Add(presetGrid);
             bApplyPreset.Text = "Reset preset";
             bApplyPreset.Width = 75;
@@ -152,7 +149,6 @@ namespace ThreadModeler.Commands
             AddRow(presetGrid, 2, "Top width (mm)", tbTopWidth);
             AddRow(presetGrid, 3, "Height (mm)", tbHeight);
             AddRow(presetGrid, 4, "Pitch (mm)", tbPitch);
-            AddRow(presetGrid, 5, "Fillet radius (mm)", tbFilletRadius);
 
             FlowLayoutPanel buttons = new FlowLayoutPanel();
             buttons.FlowDirection = FlowDirection.RightToLeft;
@@ -489,7 +485,6 @@ namespace ThreadModeler.Commands
             tbTopWidth.Text = FormatCmAsMm(_Preset.TopWidthCm);
             tbHeight.Text = FormatCmAsMm(_Preset.HeightCm);
             tbPitch.Text = FormatCmAsMm(_Preset.PitchCm);
-            tbFilletRadius.Text = FormatCmAsMm(_Preset.FilletRadiusCm);
             _UpdatingFields = false;
             _PresetDirty = false;
 
@@ -510,12 +505,10 @@ namespace ThreadModeler.Commands
             tbTopWidth.Text = string.Empty;
             tbHeight.Text = string.Empty;
             tbPitch.Text = string.Empty;
-            tbFilletRadius.Text = string.Empty;
             tbBaseWidth.ForeColor = System.Drawing.Color.Black;
             tbTopWidth.ForeColor = System.Drawing.Color.Black;
             tbHeight.ForeColor = System.Drawing.Color.Black;
             tbPitch.ForeColor = System.Drawing.Color.Black;
-            tbFilletRadius.ForeColor = System.Drawing.Color.Black;
             _UpdatingFields = false;
             _FieldsValid = false;
             _PresetDirty = false;
@@ -539,23 +532,19 @@ namespace ThreadModeler.Commands
             double topWidth;
             double height;
             double pitch;
-            double filletRadius;
 
             bool baseValid = TryReadMmAsCm(tbBaseWidth.Text, out baseWidth);
             bool topValid = TryReadMmAsCm(tbTopWidth.Text, out topWidth);
             bool heightValid = TryReadMmAsCm(tbHeight.Text, out height);
             bool pitchValid = TryReadMmAsCm(tbPitch.Text, out pitch);
-            bool filletValid = TryReadMmAsCm(tbFilletRadius.Text, out filletRadius);
 
             SetFieldState(tbBaseWidth, baseValid);
             SetFieldState(tbTopWidth, topValid);
             SetFieldState(tbHeight, heightValid);
             SetFieldState(tbPitch, pitchValid);
-            SetFieldState(tbFilletRadius, filletValid);
 
             _FieldsValid = baseValid && topValid && heightValid && pitchValid &&
-                filletValid &&
-                baseWidth > 0.0 && topWidth > 0.0 && height > 0.0 && pitch > 0.0 && filletRadius >= 0.0 &&
+                baseWidth > 0.0 && topWidth > 0.0 && height > 0.0 && pitch > 0.0 &&
                 topWidth < baseWidth &&
                 pitch >= baseWidth * 0.75 &&
                 _Context != null;
@@ -587,13 +576,11 @@ namespace ThreadModeler.Commands
             double topWidth;
             double height;
             double pitch;
-            double filletRadius;
 
             if (!TryReadMmAsCm(tbBaseWidth.Text, out baseWidth) ||
                 !TryReadMmAsCm(tbTopWidth.Text, out topWidth) ||
                 !TryReadMmAsCm(tbHeight.Text, out height) ||
-                !TryReadMmAsCm(tbPitch.Text, out pitch) ||
-                !TryReadMmAsCm(tbFilletRadius.Text, out filletRadius))
+                !TryReadMmAsCm(tbPitch.Text, out pitch))
             {
                 MessageBox.Show(
                     "Fix the profile values before generating the print thread.",
@@ -609,8 +596,7 @@ namespace ThreadModeler.Commands
                 BaseWidthCm = baseWidth,
                 TopWidthCm = topWidth,
                 HeightCm = height,
-                PitchCm = pitch,
-                FilletRadiusCm = filletRadius
+                PitchCm = pitch
             };
 
             string errorMessage;
