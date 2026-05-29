@@ -21,6 +21,7 @@ namespace ThreadModeler
         public double TopWidthCm { get; set; }
         public double HeightCm { get; set; }
         public double PitchCm { get; set; }
+        public double ClearanceCm { get; set; }
     }
 
     internal sealed class PrintThreadContext
@@ -183,7 +184,8 @@ namespace ThreadModeler
                 BaseWidthCm = baseWidthMm * 0.1,
                 TopWidthCm = topWidthMm * 0.1,
                 HeightCm = heightMm * 0.1,
-                PitchCm = pitchMm * 0.1
+                PitchCm = pitchMm * 0.1,
+                ClearanceCm = 0.0
             };
         }
 
@@ -206,6 +208,9 @@ namespace ThreadModeler
                 return false;
             }
 
+            PrintThreadPreset effectivePreset = BuildEffectivePreset(preset);
+            double radialClearance = GetRadialClearanceCm(preset);
+
             Transaction tx = _Application.TransactionManager.StartTransaction(
                 doc as _Document,
                 "Modelizing Print Thread " + context.Feature.Name);
@@ -227,10 +232,10 @@ namespace ThreadModeler
                 double centerRadius = GetReferenceRadiusCm(context);
                 double baseRadius = context.IsInteriorFace
                     ? centerRadius
-                    : centerRadius - preset.HeightCm;
+                    : centerRadius - preset.HeightCm - radialClearance;
                 double topRadius = context.IsInteriorFace
-                    ? centerRadius - preset.HeightCm
-                    : centerRadius;
+                    ? centerRadius - effectivePreset.HeightCm
+                    : centerRadius - radialClearance;
 
                 if (baseRadius <= 0.0 || topRadius <= 0.0)
                 {
@@ -240,14 +245,14 @@ namespace ThreadModeler
                 }
 
                 bool clockwise = !context.ThreadInfo.RightHanded;
-                double leadOutLength = GetLeadOutLengthCm(context, preset);
-                BalanceRampLengths(context, preset, ref leadOutLength);
+                double leadOutLength = GetLeadOutLengthCm(context, effectivePreset);
+                BalanceRampLengths(context, effectivePreset, ref leadOutLength);
                 double mainHeight = context.IsInteriorFace
-                    ? Math.Max(preset.PitchCm, context.UsefulLengthCm - GetInteriorProfileAxialWidthCm(preset))
-                    : Math.Max(preset.PitchCm, context.UsefulLengthCm - leadOutLength);
+                    ? Math.Max(effectivePreset.PitchCm, context.UsefulLengthCm - GetInteriorProfileAxialWidthCm(effectivePreset))
+                    : Math.Max(effectivePreset.PitchCm, context.UsefulLengthCm - leadOutLength);
                 double startOffset = context.IsInteriorFace
                     ? 0.0
-                    : GetExternalStartOffsetCm(preset);
+                    : GetExternalStartOffsetCm(effectivePreset);
                 Point coilBasePoint = startOffset <= 0.0
                     ? basePoint
                     : OffsetPoint(basePoint, threadAxis, -startOffset);
@@ -257,7 +262,7 @@ namespace ThreadModeler
                         radialAxis,
                         threadAxis,
                         -startOffset,
-                        preset.PitchCm,
+                        effectivePreset.PitchCm,
                         clockwise);
                 double coilHeight = context.IsInteriorFace
                     ? mainHeight
@@ -265,11 +270,25 @@ namespace ThreadModeler
 
                 DebugLog.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
-                    "Print section params: pitch={0}cm baseWidth={1}cm topWidth={2}cm height={3}cm centerRadius={4}cm baseRadius={5}cm topRadius={6}cm leadOutLength={7}cm mainHeight={8}cm startOffset={9}cm coilHeight={10}cm clockwise={11} interior={12}",
-                    preset.PitchCm,
+                    "Print clearance params: clearance={0}cm radialClearance={1}cm originalBaseWidth={2}cm originalTopWidth={3}cm effectiveBaseWidth={4}cm effectiveTopWidth={5}cm originalHeight={6}cm effectiveHeight={7}cm pitch={8}cm effectivePitch={9}cm",
+                    preset.ClearanceCm,
+                    radialClearance,
                     preset.BaseWidthCm,
                     preset.TopWidthCm,
+                    effectivePreset.BaseWidthCm,
+                    effectivePreset.TopWidthCm,
                     preset.HeightCm,
+                    effectivePreset.HeightCm,
+                    preset.PitchCm,
+                    effectivePreset.PitchCm));
+
+                DebugLog.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Print section params: pitch={0}cm baseWidth={1}cm topWidth={2}cm height={3}cm centerRadius={4}cm baseRadius={5}cm topRadius={6}cm leadOutLength={7}cm mainHeight={8}cm startOffset={9}cm coilHeight={10}cm clockwise={11} interior={12}",
+                    effectivePreset.PitchCm,
+                    effectivePreset.BaseWidthCm,
+                    effectivePreset.TopWidthCm,
+                    effectivePreset.HeightCm,
                     centerRadius,
                     baseRadius,
                     topRadius,
@@ -286,7 +305,7 @@ namespace ThreadModeler
                     coilBasePoint,
                     threadAxis,
                     coilRadialAxis,
-                    preset,
+                    effectivePreset,
                     baseRadius,
                     topRadius,
                     context.IsInteriorFace,
@@ -300,12 +319,23 @@ namespace ThreadModeler
                     return false;
                 }
 
+                CreateExternalClearanceEnvelopeCut(
+                    doc,
+                    basePoint,
+                    threadAxis,
+                    radialAxis,
+                    context.UsefulLengthCm,
+                    radialClearance,
+                    centerRadius,
+                    topRadius,
+                    context.IsInteriorFace);
+
                 CreateExternalStartChamfer(
                     doc,
                     basePoint,
                     threadAxis,
                     radialAxis,
-                    preset,
+                    effectivePreset,
                     baseRadius,
                     topRadius,
                     context.IsInteriorFace);
@@ -315,7 +345,7 @@ namespace ThreadModeler
                     basePoint,
                     threadAxis,
                     radialAxis,
-                    preset,
+                    effectivePreset,
                     baseRadius,
                     topRadius,
                     context.UsefulLengthCm,
@@ -360,6 +390,100 @@ namespace ThreadModeler
             return offset;
         }
 
+        private static void CreateExternalClearanceEnvelopeCut(
+            PartDocument doc,
+            Point basePoint,
+            UnitVector threadAxis,
+            UnitVector radialAxis,
+            double usefulLength,
+            double radialClearance,
+            double centerRadius,
+            double topRadius,
+            bool isInteriorFace)
+        {
+            if (isInteriorFace || radialClearance <= 0.0)
+            {
+                return;
+            }
+
+            double cutOuterRadius = centerRadius + Math.Max(radialClearance * 0.25, 0.005);
+            if (topRadius <= 0.0 || topRadius >= cutOuterRadius || usefulLength <= 0.0)
+            {
+                DebugLog.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "External clearance envelope cut skipped: topRadius={0}cm outerRadius={1}cm usefulLength={2}cm",
+                    topRadius,
+                    cutOuterRadius,
+                    usefulLength));
+                return;
+            }
+
+            try
+            {
+                WorkAxis sketchAxis = doc.ComponentDefinition.WorkAxes.AddFixed(
+                    basePoint,
+                    threadAxis,
+                    true);
+
+                WorkAxis radialWorkAxis = doc.ComponentDefinition.WorkAxes.AddFixed(
+                    basePoint,
+                    radialAxis,
+                    true);
+
+                WorkPlane sketchPlane = doc.ComponentDefinition.WorkPlanes.AddByTwoLines(
+                    sketchAxis,
+                    radialWorkAxis,
+                    true);
+
+                WorkPoint sketchOrigin = doc.ComponentDefinition.WorkPoints.AddFixed(
+                    basePoint,
+                    true);
+
+                PlanarSketch sketch = doc.ComponentDefinition.Sketches.AddWithOrientation(
+                    sketchPlane,
+                    sketchAxis,
+                    true,
+                    true,
+                    sketchOrigin,
+                    false);
+
+                Point2d p1 = _Tg.CreatePoint2d(0.0, topRadius);
+                Point2d p2 = _Tg.CreatePoint2d(0.0, cutOuterRadius);
+                Point2d p3 = _Tg.CreatePoint2d(usefulLength, cutOuterRadius);
+                Point2d p4 = _Tg.CreatePoint2d(usefulLength, topRadius);
+
+                SketchPoint sp1 = sketch.SketchPoints.Add(p1, false);
+                SketchPoint sp2 = sketch.SketchPoints.Add(p2, false);
+                SketchPoint sp3 = sketch.SketchPoints.Add(p3, false);
+                SketchPoint sp4 = sketch.SketchPoints.Add(p4, false);
+
+                ObjectCollection segments = _Application.TransientObjects.CreateObjectCollection();
+                segments.Add(sketch.SketchLines.AddByTwoPoints(sp1, sp2));
+                segments.Add(sketch.SketchLines.AddByTwoPoints(sp2, sp3));
+                segments.Add(sketch.SketchLines.AddByTwoPoints(sp3, sp4));
+                segments.Add(sketch.SketchLines.AddByTwoPoints(sp4, sp1));
+
+                Profile profile = sketch.Profiles.AddForSolid(false, segments, null);
+                RevolveFeature envelopeCut = doc.ComponentDefinition.Features.RevolveFeatures.AddFull(
+                    profile,
+                    sketchAxis,
+                    PartFeatureOperationEnum.kCutOperation);
+
+                DebugLog.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "External clearance envelope cut: created={0} length={1}cm topRadius={2}cm outerRadius={3}cm health={4}",
+                    envelopeCut != null,
+                    usefulLength,
+                    topRadius,
+                    cutOuterRadius,
+                    envelopeCut == null ? "<null>" : envelopeCut.HealthStatus.ToString()));
+            }
+            catch (Exception ex)
+            {
+                DebugLog.WriteException("External clearance envelope cut failed.", ex);
+            }
+        }
+
         private static void CreateExternalStartChamfer(
             PartDocument doc,
             Point basePoint,
@@ -376,7 +500,7 @@ namespace ThreadModeler
             }
 
             double chamferLength = Math.Min(preset.BaseWidthCm * 0.5, preset.PitchCm * 0.25);
-            double reducedRadius = Math.Max(baseRadius, topRadius - (preset.HeightCm * 0.45));
+            double reducedRadius = baseRadius;
             double cutOuterRadius = topRadius + Math.Max(preset.HeightCm * 0.10, 0.01);
             if (chamferLength <= 0.0 || reducedRadius >= cutOuterRadius)
             {
@@ -751,6 +875,27 @@ namespace ThreadModeler
             return Math.Max(baseWidth, topWidth);
         }
 
+        private static double GetRadialClearanceCm(PrintThreadPreset preset)
+        {
+            return preset.ClearanceCm * 0.5;
+        }
+
+        private static PrintThreadPreset BuildEffectivePreset(PrintThreadPreset preset)
+        {
+            double radialClearance = GetRadialClearanceCm(preset);
+            double minHeight = ThreadWorker.ThresholdPitchCm;
+
+            return new PrintThreadPreset
+            {
+                Name = preset.Name,
+                BaseWidthCm = preset.BaseWidthCm - preset.ClearanceCm,
+                TopWidthCm = preset.TopWidthCm - preset.ClearanceCm,
+                HeightCm = Math.Max(preset.HeightCm - radialClearance, minHeight),
+                PitchCm = preset.PitchCm,
+                ClearanceCm = preset.ClearanceCm
+            };
+        }
+
         private static UnitVector GetSectionRadialAxis(
             UnitVector radialAxis,
             UnitVector threadAxis,
@@ -1005,11 +1150,32 @@ namespace ThreadModeler
                 return false;
             }
 
+            if (preset.ClearanceCm < 0.0)
+            {
+                errorMessage = "Clearance must be greater than or equal to zero.";
+                return false;
+            }
+
             if (preset.TopWidthCm >= preset.BaseWidthCm)
             {
                 errorMessage = "Top width must be smaller than base width.";
                 return false;
             }
+
+            if (preset.ClearanceCm >= preset.TopWidthCm * 0.8)
+            {
+                errorMessage = "Clearance is too large for the requested top width.";
+                return false;
+            }
+
+            double radialClearance = GetRadialClearanceCm(preset);
+            if (preset.HeightCm - radialClearance <= ThreadWorker.ThresholdPitchCm)
+            {
+                errorMessage = "Clearance leaves too little thread height.";
+                return false;
+            }
+
+            PrintThreadPreset effectivePreset = BuildEffectivePreset(preset);
 
             if (preset.PitchCm < ThreadWorker.ThresholdPitchCm)
             {
@@ -1018,13 +1184,13 @@ namespace ThreadModeler
             }
 
             double nominalRadius = context.NominalDiameterCm * 0.5;
-            if (nominalRadius <= preset.BaseWidthCm * 0.5)
+            if (nominalRadius <= effectivePreset.BaseWidthCm * 0.5)
             {
                 errorMessage = "Nominal diameter is too small for the requested profile.";
                 return false;
             }
 
-            if (preset.PitchCm < preset.BaseWidthCm * 0.75)
+            if (effectivePreset.PitchCm < effectivePreset.BaseWidthCm * 0.75)
             {
                 errorMessage = "Pitch is too small compared to the profile width.";
                 return false;
@@ -1032,8 +1198,8 @@ namespace ThreadModeler
 
             if (context != null && context.IsInteriorFace)
             {
-                double interiorMainHeight = context.UsefulLengthCm - GetInteriorProfileAxialWidthCm(preset);
-                if (interiorMainHeight < preset.PitchCm)
+                double interiorMainHeight = context.UsefulLengthCm - GetInteriorProfileAxialWidthCm(effectivePreset);
+                if (interiorMainHeight < effectivePreset.PitchCm)
                 {
                     errorMessage = "Selected internal thread is too short for this profile.";
                     return false;

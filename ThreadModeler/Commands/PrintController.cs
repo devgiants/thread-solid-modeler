@@ -34,6 +34,7 @@ namespace ThreadModeler.Commands
         private readonly TextBox tbTopWidth;
         private readonly TextBox tbHeight;
         private readonly TextBox tbPitch;
+        private readonly TextBox tbClearance;
         private readonly Button bApplyPreset;
         private readonly Button bGenerate;
         private readonly Button bCancel;
@@ -69,6 +70,7 @@ namespace ThreadModeler.Commands
             tbTopWidth = CreateEditableBox();
             tbHeight = CreateEditableBox();
             tbPitch = CreateEditableBox();
+            tbClearance = CreateEditableBox();
             bApplyPreset = new Button();
             bGenerate = new Button();
             bCancel = new Button();
@@ -79,6 +81,7 @@ namespace ThreadModeler.Commands
             tbTopWidth.TextChanged += NumericField_TextChanged;
             tbHeight.TextChanged += NumericField_TextChanged;
             tbPitch.TextChanged += NumericField_TextChanged;
+            tbClearance.TextChanged += NumericField_TextChanged;
             bApplyPreset.Click += bApplyPreset_Click;
             bGenerate.Click += bGenerate_Click;
             bCancel.Click += bCancel_Click;
@@ -140,7 +143,7 @@ namespace ThreadModeler.Commands
             gbPreset.Padding = new Padding(12, 18, 12, 12);
             root.Controls.Add(gbPreset, 0, 2);
 
-            TableLayoutPanel presetGrid = CreateGrid(3, 5);
+            TableLayoutPanel presetGrid = CreateGrid(3, 6);
             gbPreset.Controls.Add(presetGrid);
             bApplyPreset.Text = "Reset preset";
             bApplyPreset.Width = 75;
@@ -149,6 +152,7 @@ namespace ThreadModeler.Commands
             AddRow(presetGrid, 2, "Top width (mm)", tbTopWidth);
             AddRow(presetGrid, 3, "Height (mm)", tbHeight);
             AddRow(presetGrid, 4, "Pitch (mm)", tbPitch);
+            AddRow(presetGrid, 5, "Clearance (mm)", tbClearance);
 
             FlowLayoutPanel buttons = new FlowLayoutPanel();
             buttons.FlowDirection = FlowDirection.RightToLeft;
@@ -485,6 +489,7 @@ namespace ThreadModeler.Commands
             tbTopWidth.Text = FormatCmAsMm(_Preset.TopWidthCm);
             tbHeight.Text = FormatCmAsMm(_Preset.HeightCm);
             tbPitch.Text = FormatCmAsMm(_Preset.PitchCm);
+            tbClearance.Text = "0";
             _UpdatingFields = false;
             _PresetDirty = false;
 
@@ -505,10 +510,12 @@ namespace ThreadModeler.Commands
             tbTopWidth.Text = string.Empty;
             tbHeight.Text = string.Empty;
             tbPitch.Text = string.Empty;
+            tbClearance.Text = string.Empty;
             tbBaseWidth.ForeColor = System.Drawing.Color.Black;
             tbTopWidth.ForeColor = System.Drawing.Color.Black;
             tbHeight.ForeColor = System.Drawing.Color.Black;
             tbPitch.ForeColor = System.Drawing.Color.Black;
+            tbClearance.ForeColor = System.Drawing.Color.Black;
             _UpdatingFields = false;
             _FieldsValid = false;
             _PresetDirty = false;
@@ -532,33 +539,62 @@ namespace ThreadModeler.Commands
             double topWidth;
             double height;
             double pitch;
+            double clearance;
 
             bool baseValid = TryReadMmAsCm(tbBaseWidth.Text, out baseWidth);
             bool topValid = TryReadMmAsCm(tbTopWidth.Text, out topWidth);
             bool heightValid = TryReadMmAsCm(tbHeight.Text, out height);
             bool pitchValid = TryReadMmAsCm(tbPitch.Text, out pitch);
+            bool clearanceValid = TryReadMmAsCm(tbClearance.Text, out clearance) && clearance >= 0.0;
 
             SetFieldState(tbBaseWidth, baseValid);
             SetFieldState(tbTopWidth, topValid);
             SetFieldState(tbHeight, heightValid);
             SetFieldState(tbPitch, pitchValid);
+            SetFieldState(tbClearance, clearanceValid);
 
             bool lengthValid = true;
-            if (_Context != null && _Context.IsInteriorFace &&
-                baseValid && topValid && pitchValid &&
-                baseWidth > 0.0 && topWidth > 0.0 && pitch > 0.0)
+            bool profileValid = false;
+            bool clearanceRangeValid = false;
+            bool heightClearanceValid = false;
+            bool pitchWidthValid = false;
+
+            if (baseValid && topValid && heightValid && pitchValid && clearanceValid &&
+                baseWidth > 0.0 && topWidth > 0.0 && height > 0.0 && pitch > 0.0 &&
+                clearance >= 0.0 && topWidth < baseWidth)
             {
+                double effectiveBaseWidth = baseWidth - clearance;
+                double effectiveTopWidth = topWidth - clearance;
+                double effectiveHeight = height - (clearance * 0.5);
+
+                clearanceRangeValid = clearance < topWidth * 0.8;
+                heightClearanceValid = effectiveHeight > ThreadWorker.ThresholdPitchCm;
+                pitchWidthValid = pitch >= effectiveBaseWidth * 0.75;
+                profileValid = effectiveBaseWidth > 0.0 &&
+                    effectiveTopWidth > 0.0 &&
+                    effectiveTopWidth < effectiveBaseWidth &&
+                    clearanceRangeValid &&
+                    heightClearanceValid &&
+                    pitchWidthValid;
+            }
+
+            if (_Context != null && _Context.IsInteriorFace &&
+                baseValid && topValid && pitchValid && clearanceValid &&
+                profileValid)
+            {
+                double effectiveBaseWidth = baseWidth - clearance;
+                double effectiveTopWidth = topWidth - clearance;
                 double minWidth = Math.Min(Math.Max(pitch * 0.02, 0.002), pitch * 0.20);
-                double baseWidthComplement = Math.Max(minWidth, pitch - topWidth);
-                double topWidthComplement = Math.Max(minWidth, pitch - baseWidth);
+                double baseWidthComplement = Math.Max(minWidth, pitch - effectiveTopWidth);
+                double topWidthComplement = Math.Max(minWidth, pitch - effectiveBaseWidth);
                 double axialWidth = Math.Max(baseWidthComplement, topWidthComplement);
                 lengthValid = _Context.UsefulLengthCm - axialWidth >= pitch;
             }
 
-            _FieldsValid = baseValid && topValid && heightValid && pitchValid &&
+            _FieldsValid = baseValid && topValid && heightValid && pitchValid && clearanceValid &&
                 baseWidth > 0.0 && topWidth > 0.0 && height > 0.0 && pitch > 0.0 &&
-                topWidth < baseWidth &&
-                pitch >= baseWidth * 0.75 &&
+                clearance >= 0.0 &&
+                profileValid &&
                 lengthValid &&
                 _Context != null;
         }
@@ -589,11 +625,13 @@ namespace ThreadModeler.Commands
             double topWidth;
             double height;
             double pitch;
+            double clearance;
 
             if (!TryReadMmAsCm(tbBaseWidth.Text, out baseWidth) ||
                 !TryReadMmAsCm(tbTopWidth.Text, out topWidth) ||
                 !TryReadMmAsCm(tbHeight.Text, out height) ||
-                !TryReadMmAsCm(tbPitch.Text, out pitch))
+                !TryReadMmAsCm(tbPitch.Text, out pitch) ||
+                !TryReadMmAsCm(tbClearance.Text, out clearance))
             {
                 MessageBox.Show(
                     "Fix the profile values before generating the print thread.",
@@ -609,7 +647,8 @@ namespace ThreadModeler.Commands
                 BaseWidthCm = baseWidth,
                 TopWidthCm = topWidth,
                 HeightCm = height,
-                PitchCm = pitch
+                PitchCm = pitch,
+                ClearanceCm = clearance
             };
 
             string errorMessage;
