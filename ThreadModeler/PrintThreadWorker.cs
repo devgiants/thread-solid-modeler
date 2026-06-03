@@ -230,9 +230,12 @@ namespace ThreadModeler
                 }
 
                 double centerRadius = GetReferenceRadiusCm(context);
+                double externalProfileHeight = context.IsInteriorFace
+                    ? effectivePreset.HeightCm
+                    : preset.HeightCm;
                 double baseRadius = context.IsInteriorFace
                     ? centerRadius
-                    : centerRadius - radialClearance - effectivePreset.HeightCm;
+                    : centerRadius - radialClearance - externalProfileHeight;
                 double topRadius = context.IsInteriorFace
                     ? centerRadius - effectivePreset.HeightCm
                     : centerRadius - radialClearance;
@@ -287,11 +290,12 @@ namespace ThreadModeler
 
                 DebugLog.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
-                    "Print section params: pitch={0}cm baseWidth={1}cm topWidth={2}cm height={3}cm centerRadius={4}cm baseRadius={5}cm topRadius={6}cm leadOutLength={7}cm mainHeight={8}cm startOffset={9}cm startRampLength={10}cm coilHeight={11}cm clockwise={12} interior={13}",
+                    "Print section params: pitch={0}cm baseWidth={1}cm topWidth={2}cm height={3}cm radialProfileHeight={4}cm centerRadius={5}cm baseRadius={6}cm topRadius={7}cm leadOutLength={8}cm mainHeight={9}cm startOffset={10}cm startRampLength={11}cm coilHeight={12}cm clockwise={13} interior={14}",
                     effectivePreset.PitchCm,
                     effectivePreset.BaseWidthCm,
                     effectivePreset.TopWidthCm,
                     effectivePreset.HeightCm,
+                    externalProfileHeight,
                     centerRadius,
                     baseRadius,
                     topRadius,
