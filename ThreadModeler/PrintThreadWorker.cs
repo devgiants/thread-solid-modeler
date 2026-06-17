@@ -230,14 +230,12 @@ namespace ThreadModeler
                 }
 
                 double centerRadius = GetReferenceRadiusCm(context);
-                double externalProfileHeight = context.IsInteriorFace
-                    ? effectivePreset.HeightCm
-                    : preset.HeightCm;
+                double radialProfileHeight = preset.HeightCm;
                 double baseRadius = context.IsInteriorFace
-                    ? centerRadius
-                    : centerRadius - radialClearance - externalProfileHeight;
+                    ? centerRadius + radialClearance
+                    : centerRadius - radialClearance - radialProfileHeight;
                 double topRadius = context.IsInteriorFace
-                    ? centerRadius - effectivePreset.HeightCm
+                    ? baseRadius - radialProfileHeight
                     : centerRadius - radialClearance;
 
                 if (baseRadius <= 0.0 || topRadius <= 0.0)
@@ -251,14 +249,35 @@ namespace ThreadModeler
                 double leadOutLength = GetLeadOutLengthCm(context, effectivePreset);
                 BalanceRampLengths(context, effectivePreset, ref leadOutLength);
                 double mainHeight = context.IsInteriorFace
-                    ? Math.Max(effectivePreset.PitchCm, context.UsefulLengthCm - GetInteriorProfileAxialWidthCm(effectivePreset))
+                    ? context.UsefulLengthCm
                     : Math.Max(effectivePreset.PitchCm, context.UsefulLengthCm - leadOutLength);
                 double startOffset = context.IsInteriorFace
-                    ? 0.0
+                    ? GetInteriorEndOffsetCm(effectivePreset)
                     : GetExternalStartOffsetCm(effectivePreset);
                 double startRampLength = context.IsInteriorFace
-                    ? 0.0
+                    ? GetInteriorTransitionLengthCm(effectivePreset)
                     : GetExternalStartRampLengthCm(effectivePreset, mainHeight, startOffset);
+                double endRampLength = context.IsInteriorFace
+                    ? GetInteriorTransitionLengthCm(effectivePreset)
+                    : 0.0;
+                double endOffset = context.IsInteriorFace
+                    ? GetInteriorEndOffsetCm(effectivePreset)
+                    : 0.0;
+
+                if (context.IsInteriorFace)
+                {
+                    BalanceInteriorAdditiveLengths(
+                        effectivePreset,
+                        context.UsefulLengthCm,
+                        ref startOffset,
+                        ref startRampLength,
+                        ref endRampLength,
+                        ref endOffset);
+                    mainHeight = Math.Max(
+                        effectivePreset.PitchCm,
+                        context.UsefulLengthCm - startOffset - startRampLength - endRampLength - endOffset);
+                }
+
                 Point coilBasePoint = startOffset <= 0.0
                     ? basePoint
                     : OffsetPoint(basePoint, threadAxis, startOffset + startRampLength);
@@ -290,12 +309,12 @@ namespace ThreadModeler
 
                 DebugLog.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
-                    "Print section params: pitch={0}cm baseWidth={1}cm topWidth={2}cm height={3}cm radialProfileHeight={4}cm centerRadius={5}cm baseRadius={6}cm topRadius={7}cm leadOutLength={8}cm mainHeight={9}cm startOffset={10}cm startRampLength={11}cm coilHeight={12}cm clockwise={13} interior={14}",
+                    "Print section params: pitch={0}cm baseWidth={1}cm topWidth={2}cm height={3}cm radialProfileHeight={4}cm centerRadius={5}cm baseRadius={6}cm topRadius={7}cm leadOutLength={8}cm mainHeight={9}cm startOffset={10}cm startRampLength={11}cm endRampLength={12}cm endOffset={13}cm coilHeight={14}cm clockwise={15} interior={16}",
                     effectivePreset.PitchCm,
                     effectivePreset.BaseWidthCm,
                     effectivePreset.TopWidthCm,
                     effectivePreset.HeightCm,
-                    externalProfileHeight,
+                    radialProfileHeight,
                     centerRadius,
                     baseRadius,
                     topRadius,
@@ -303,6 +322,8 @@ namespace ThreadModeler
                     mainHeight,
                     startOffset,
                     startRampLength,
+                    endRampLength,
+                    endOffset,
                     coilHeight,
                     clockwise,
                     context.IsInteriorFace));
@@ -319,6 +340,17 @@ namespace ThreadModeler
                         centerRadius,
                         topRadius);
                 }
+                else
+                {
+                    CreateInteriorRootCylinderCut(
+                        doc,
+                        basePoint,
+                        threadAxis,
+                        radialAxis,
+                        context.UsefulLengthCm,
+                        centerRadius,
+                        baseRadius);
+                }
 
                 if (!context.IsInteriorFace)
                 {
@@ -334,10 +366,24 @@ namespace ThreadModeler
                         startRampLength,
                         clockwise);
                 }
+                else
+                {
+                    CreateInteriorStartAdditiveRamp(
+                        doc,
+                        basePoint,
+                        threadAxis,
+                        radialAxis,
+                        effectivePreset,
+                        baseRadius,
+                        topRadius,
+                        startOffset,
+                        startRampLength,
+                        clockwise);
+                }
 
                 CoilFeature coil;
                 bool coilCreated = context.IsInteriorFace
-                    ? TryCreateCoilSection(
+                    ? TryCreateInteriorAdditiveCoilSection(
                         doc,
                         coilBasePoint,
                         threadAxis,
@@ -345,7 +391,6 @@ namespace ThreadModeler
                         effectivePreset,
                         baseRadius,
                         topRadius,
-                        true,
                         coilHeight,
                         0.0,
                         clockwise,
@@ -382,7 +427,7 @@ namespace ThreadModeler
 
                 if (context.IsInteriorFace)
                 {
-                    CreateLeadOutRamp(
+                    CreateInteriorEndAdditiveRamp(
                         doc,
                         basePoint,
                         threadAxis,
@@ -390,10 +435,9 @@ namespace ThreadModeler
                         effectivePreset,
                         baseRadius,
                         topRadius,
-                        context.UsefulLengthCm,
-                        leadOutLength,
-                        clockwise,
-                        true);
+                        startOffset + startRampLength + coilHeight,
+                        endRampLength,
+                        clockwise);
                 }
 
                 context.Feature.Suppressed = true;
@@ -522,6 +566,194 @@ namespace ThreadModeler
                 rampCoil == null ? "<null>" : rampCoil.HealthStatus.ToString()));
         }
 
+        private static double GetInteriorEndOffsetCm(PrintThreadPreset preset)
+        {
+            double offset = Math.Max(preset.BaseWidthCm, ThreadWorker.ThresholdPitchCm);
+
+            DebugLog.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "Interior additive offset: baseWidth={0}cm pitch={1}cm offset={2}cm",
+                preset.BaseWidthCm,
+                preset.PitchCm,
+                offset));
+
+            return offset;
+        }
+
+        private static double GetInteriorTransitionLengthCm(PrintThreadPreset preset)
+        {
+            double length = Math.Max(
+                ThreadWorker.ThresholdPitchCm,
+                Math.Min(0.05, preset.PitchCm * 0.125));
+
+            DebugLog.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "Interior additive transition length: length={0}cm equivalentAngle={1}deg",
+                length,
+                length / preset.PitchCm * 360.0));
+
+            return length;
+        }
+
+        private static void BalanceInteriorAdditiveLengths(
+            PrintThreadPreset preset,
+            double usefulLength,
+            ref double startOffset,
+            ref double startRampLength,
+            ref double endRampLength,
+            ref double endOffset)
+        {
+            double maxTransitions = usefulLength - preset.PitchCm;
+            double transitionTotal = startOffset + startRampLength + endRampLength + endOffset;
+
+            if (transitionTotal <= maxTransitions)
+            {
+                return;
+            }
+
+            if (maxTransitions <= ThreadWorker.ThresholdPitchCm || transitionTotal <= 0.0)
+            {
+                startOffset = 0.0;
+                startRampLength = 0.0;
+                endRampLength = 0.0;
+                endOffset = 0.0;
+                DebugLog.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Interior additive transitions disabled: usefulLength={0}cm pitch={1}cm",
+                    usefulLength,
+                    preset.PitchCm));
+                return;
+            }
+
+            double scale = maxTransitions / transitionTotal;
+            startOffset *= scale;
+            startRampLength *= scale;
+            endRampLength *= scale;
+            endOffset *= scale;
+
+            DebugLog.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "Interior additive transitions scaled: scale={0} startOffset={1}cm startRamp={2}cm endRamp={3}cm endOffset={4}cm usefulLength={5}cm",
+                scale,
+                startOffset,
+                startRampLength,
+                endRampLength,
+                endOffset,
+                usefulLength));
+        }
+
+        private static void CreateInteriorStartAdditiveRamp(
+            PartDocument doc,
+            Point basePoint,
+            UnitVector threadAxis,
+            UnitVector radialAxis,
+            PrintThreadPreset preset,
+            double baseRadius,
+            double topRadius,
+            double startOffset,
+            double rampLength,
+            bool clockwise)
+        {
+            if (rampLength <= ThreadWorker.ThresholdPitchCm)
+            {
+                return;
+            }
+
+            double radialShift = baseRadius - topRadius;
+            double startBaseRadius = baseRadius + radialShift;
+            double startTopRadius = topRadius + radialShift;
+            double taper = -Math.Atan(radialShift / rampLength);
+            Point rampBasePoint = OffsetPoint(basePoint, threadAxis, startOffset);
+            UnitVector rampRadialAxis = GetSectionRadialAxis(
+                radialAxis,
+                threadAxis,
+                startOffset,
+                preset.PitchCm,
+                clockwise);
+
+            CoilFeature rampCoil;
+            bool created = TryCreateInteriorAdditiveCoilSection(
+                doc,
+                rampBasePoint,
+                threadAxis,
+                rampRadialAxis,
+                preset,
+                startBaseRadius,
+                startTopRadius,
+                rampLength,
+                taper,
+                clockwise,
+                out rampCoil);
+
+            DebugLog.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "Interior start additive ramp: created={0} startOffset={1}cm length={2}cm taper={3}rad startBaseRadius={4}cm startTopRadius={5}cm endBaseRadius={6}cm endTopRadius={7}cm health={8}",
+                created,
+                startOffset,
+                rampLength,
+                taper,
+                startBaseRadius,
+                startTopRadius,
+                baseRadius,
+                topRadius,
+                rampCoil == null ? "<null>" : rampCoil.HealthStatus.ToString()));
+        }
+
+        private static void CreateInteriorEndAdditiveRamp(
+            PartDocument doc,
+            Point basePoint,
+            UnitVector threadAxis,
+            UnitVector radialAxis,
+            PrintThreadPreset preset,
+            double baseRadius,
+            double topRadius,
+            double rampStartDistance,
+            double rampLength,
+            bool clockwise)
+        {
+            if (rampLength <= ThreadWorker.ThresholdPitchCm)
+            {
+                return;
+            }
+
+            double radialShift = baseRadius - topRadius;
+            double taper = Math.Atan(radialShift / rampLength);
+            Point rampBasePoint = OffsetPoint(basePoint, threadAxis, rampStartDistance);
+            UnitVector rampRadialAxis = GetSectionRadialAxis(
+                radialAxis,
+                threadAxis,
+                rampStartDistance,
+                preset.PitchCm,
+                clockwise);
+
+            CoilFeature rampCoil;
+            bool created = TryCreateInteriorAdditiveCoilSection(
+                doc,
+                rampBasePoint,
+                threadAxis,
+                rampRadialAxis,
+                preset,
+                baseRadius,
+                topRadius,
+                rampLength,
+                taper,
+                clockwise,
+                out rampCoil);
+
+            DebugLog.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "Interior end additive ramp: created={0} startDistance={1}cm length={2}cm taper={3}rad startBaseRadius={4}cm startTopRadius={5}cm endBaseRadius={6}cm endTopRadius={7}cm health={8}",
+                created,
+                rampStartDistance,
+                rampLength,
+                taper,
+                baseRadius,
+                topRadius,
+                baseRadius + radialShift,
+                topRadius + radialShift,
+                rampCoil == null ? "<null>" : rampCoil.HealthStatus.ToString()));
+        }
+
         private static void CreateExternalRootCylinderCut(
             PartDocument doc,
             Point basePoint,
@@ -608,6 +840,92 @@ namespace ThreadModeler
             catch (Exception ex)
             {
                 DebugLog.WriteException("External root cylinder cut failed.", ex);
+            }
+        }
+
+        private static void CreateInteriorRootCylinderCut(
+            PartDocument doc,
+            Point basePoint,
+            UnitVector threadAxis,
+            UnitVector radialAxis,
+            double usefulLength,
+            double centerRadius,
+            double baseRadius)
+        {
+            if (usefulLength <= 0.0 || baseRadius <= centerRadius + ThreadWorker.ThresholdPitchCm)
+            {
+                DebugLog.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Interior root cylinder cut skipped: length={0}cm centerRadius={1}cm baseRadius={2}cm",
+                    usefulLength,
+                    centerRadius,
+                    baseRadius));
+                return;
+            }
+
+            try
+            {
+                WorkAxis sketchAxis = doc.ComponentDefinition.WorkAxes.AddFixed(
+                    basePoint,
+                    threadAxis,
+                    true);
+
+                WorkAxis radialWorkAxis = doc.ComponentDefinition.WorkAxes.AddFixed(
+                    basePoint,
+                    radialAxis,
+                    true);
+
+                WorkPlane sketchPlane = doc.ComponentDefinition.WorkPlanes.AddByTwoLines(
+                    sketchAxis,
+                    radialWorkAxis,
+                    true);
+
+                WorkPoint sketchOrigin = doc.ComponentDefinition.WorkPoints.AddFixed(
+                    basePoint,
+                    true);
+
+                PlanarSketch sketch = doc.ComponentDefinition.Sketches.AddWithOrientation(
+                    sketchPlane,
+                    sketchAxis,
+                    true,
+                    true,
+                    sketchOrigin,
+                    false);
+
+                Point2d p1 = _Tg.CreatePoint2d(0.0, centerRadius);
+                Point2d p2 = _Tg.CreatePoint2d(0.0, baseRadius);
+                Point2d p3 = _Tg.CreatePoint2d(usefulLength, baseRadius);
+                Point2d p4 = _Tg.CreatePoint2d(usefulLength, centerRadius);
+
+                SketchPoint sp1 = sketch.SketchPoints.Add(p1, false);
+                SketchPoint sp2 = sketch.SketchPoints.Add(p2, false);
+                SketchPoint sp3 = sketch.SketchPoints.Add(p3, false);
+                SketchPoint sp4 = sketch.SketchPoints.Add(p4, false);
+
+                ObjectCollection segments = _Application.TransientObjects.CreateObjectCollection();
+                segments.Add(sketch.SketchLines.AddByTwoPoints(sp1, sp2));
+                segments.Add(sketch.SketchLines.AddByTwoPoints(sp2, sp3));
+                segments.Add(sketch.SketchLines.AddByTwoPoints(sp3, sp4));
+                segments.Add(sketch.SketchLines.AddByTwoPoints(sp4, sp1));
+
+                Profile profile = sketch.Profiles.AddForSolid(false, segments, null);
+                RevolveFeature rootCut = doc.ComponentDefinition.Features.RevolveFeatures.AddFull(
+                    profile,
+                    sketchAxis,
+                    PartFeatureOperationEnum.kCutOperation);
+
+                DebugLog.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Interior root cylinder cut: created={0} length={1}cm centerRadius={2}cm baseRadius={3}cm health={4}",
+                    rootCut != null,
+                    usefulLength,
+                    centerRadius,
+                    baseRadius,
+                    rootCut == null ? "<null>" : rootCut.HealthStatus.ToString()));
+            }
+            catch (Exception ex)
+            {
+                DebugLog.WriteException("Interior root cylinder cut failed.", ex);
             }
         }
 
@@ -1476,6 +1794,141 @@ namespace ThreadModeler
             catch (Exception ex)
             {
                 DebugLog.WriteException("TryCreateExternalAdditiveCoilSection failed.", ex);
+                coil = null;
+                return false;
+            }
+        }
+
+        private static ObjectCollection DrawInteriorVisibleTrapezoidProfile(
+            PlanarSketch sketch,
+            PrintThreadPreset preset,
+            double baseRadius,
+            double topRadius)
+        {
+            ObjectCollection segments = _Application.TransientObjects.CreateObjectCollection();
+
+            double topInset = (preset.BaseWidthCm - preset.TopWidthCm) * 0.5;
+
+            DebugLog.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "Interior additive trapezoid profile: baseWidth={0}cm topWidth={1}cm pitch={2}cm height={3}cm baseRadius={4}cm topRadius={5}cm topInset={6}cm",
+                preset.BaseWidthCm,
+                preset.TopWidthCm,
+                preset.PitchCm,
+                preset.HeightCm,
+                baseRadius,
+                topRadius,
+                topInset));
+
+            Point2d p1 = _Tg.CreatePoint2d(0.0, baseRadius);
+            Point2d p2 = _Tg.CreatePoint2d(preset.BaseWidthCm, baseRadius);
+            Point2d p3 = _Tg.CreatePoint2d(topInset + preset.TopWidthCm, topRadius);
+            Point2d p4 = _Tg.CreatePoint2d(topInset, topRadius);
+
+            BuildSharpTrapezoidProfile(sketch, p1, p2, p3, p4, segments);
+
+            DebugLog.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "Interior additive trapezoid points: p1=({0},{1}) p2=({2},{3}) p3=({4},{5}) p4=({6},{7}) segmentCount={8}",
+                p1.X,
+                p1.Y,
+                p2.X,
+                p2.Y,
+                p3.X,
+                p3.Y,
+                p4.X,
+                p4.Y,
+                segments.Count));
+
+            return segments;
+        }
+
+        private static bool TryCreateInteriorAdditiveCoilSection(
+            PartDocument doc,
+            Point basePoint,
+            UnitVector threadAxis,
+            UnitVector radialAxis,
+            PrintThreadPreset preset,
+            double baseRadius,
+            double topRadius,
+            double coilHeight,
+            double taper,
+            bool clockwise,
+            out CoilFeature coil)
+        {
+            coil = null;
+
+            try
+            {
+                WorkAxis sketchAxis = doc.ComponentDefinition.WorkAxes.AddFixed(
+                    basePoint,
+                    threadAxis,
+                    true);
+
+                WorkAxis radialWorkAxis = doc.ComponentDefinition.WorkAxes.AddFixed(
+                    basePoint,
+                    radialAxis,
+                    true);
+
+                WorkPlane sketchPlane = doc.ComponentDefinition.WorkPlanes.AddByTwoLines(
+                    sketchAxis,
+                    radialWorkAxis,
+                    true);
+
+                WorkPoint sketchOrigin = doc.ComponentDefinition.WorkPoints.AddFixed(
+                    basePoint,
+                    true);
+
+                PlanarSketch sketch = doc.ComponentDefinition.Sketches.AddWithOrientation(
+                    sketchPlane,
+                    sketchAxis,
+                    true,
+                    true,
+                    sketchOrigin,
+                    false);
+
+                ObjectCollection profileSegments = DrawInteriorVisibleTrapezoidProfile(
+                    sketch,
+                    preset,
+                    baseRadius,
+                    topRadius);
+
+                DebugLog.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "TryCreateInteriorAdditiveCoilSection: basePoint=({0},{1},{2}) coilHeight={3} taper={4} clockwise={5} baseRadius={6} topRadius={7} profileSegments={8}",
+                    basePoint.X,
+                    basePoint.Y,
+                    basePoint.Z,
+                    coilHeight,
+                    taper,
+                    clockwise,
+                    baseRadius,
+                    topRadius,
+                    profileSegments == null ? 0 : profileSegments.Count));
+
+                Profile profile = sketch.Profiles.AddForSolid(false, profileSegments, null);
+
+                coil = doc.ComponentDefinition.Features.CoilFeatures.AddByPitchAndHeight(
+                    profile,
+                    sketchAxis,
+                    preset.PitchCm,
+                    coilHeight,
+                    PartFeatureOperationEnum.kJoinOperation,
+                    false,
+                    clockwise,
+                    taper,
+                    false,
+                    0.0,
+                    0.0,
+                    false,
+                    0.0,
+                    0.0);
+
+                return (coil != null && coil.HealthStatus == HealthStatusEnum.kUpToDateHealth);
+            }
+            catch (Exception ex)
+            {
+                DebugLog.WriteException("TryCreateInteriorAdditiveCoilSection failed.", ex);
                 coil = null;
                 return false;
             }
